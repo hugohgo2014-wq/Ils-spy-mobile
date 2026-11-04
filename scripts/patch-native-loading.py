@@ -316,4 +316,153 @@ picker_source = re.sub(
 )
 activity.write_text(picker_source, encoding="utf-8")
 
+
+
+# Replace the generic landing screen with an ILSpy-style mobile workbench.
+# Keep the existing NativeAOT engine and JNI bridge untouched.
+workbench = root / "app/src/main/java/com/ilspy/mobile/WorkbenchActivity.java"
+workbench.write_text(r'''package com.ilspy.mobile;
+
+import android.app.Activity;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Bundle;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.Button;
+import android.widget.HorizontalScrollView;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.graphics.Typeface;
+import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+
+public final class WorkbenchActivity extends Activity {
+    private static final int PICK_ASSEMBLY = 4102;
+    private int bg = Color.rgb(18, 21, 28), panel = Color.rgb(29, 34, 44);
+    private int border = Color.rgb(55, 65, 81), accent = Color.rgb(35, 155, 219);
+    private int text = Color.rgb(226, 232, 240), muted = Color.rgb(148, 163, 184);
+    private LinearLayout root, toolbar, content, bottom;
+    private TextView title, status, code;
+    private File currentFile;
+    private String inspectResult = "", decompiled = "";
+
+    @Override public void onCreate(Bundle state) {
+        super.onCreate(state);
+        getWindow().setStatusBarColor(bg);
+        getWindow().setNavigationBarColor(bg);
+        getWindow().getDecorView().setSystemUiVisibility(0);
+        buildShell();
+        boolean ready = NativeBridge.initialize(getApplicationContext());
+        status.setText(ready ? "ILSpy engine · " + NativeBridge.nativeEngineVersion()
+                : "Engine unavailable · " + NativeBridge.loadError());
+        status.setTextColor(ready ? Color.rgb(52, 211, 153) : Color.rgb(248, 113, 113));
+    }
+
+    private GradientDrawable shape(int color, int stroke) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(color); d.setCornerRadius(dp(12));
+        if (stroke != 0) d.setStroke(dp(1), stroke);
+        return d;
+    }
+    private int dp(float v) { return (int)(v * getResources().getDisplayMetrics().density + .5f); }
+    private TextView label(String value, float size, int color, boolean bold) {
+        TextView t = new TextView(this); t.setText(value); t.setTextSize(size);
+        t.setTextColor(color); t.setGravity(Gravity.CENTER_VERTICAL);
+        if (bold) t.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        return t;
+    }
+    private Button button(String value, boolean primary, Runnable action) {
+        Button b = new Button(this); b.setText(value); b.setAllCaps(false);
+        b.setTextSize(13); b.setTextColor(primary ? Color.WHITE : text);
+        b.setBackground(shape(primary ? accent : panel, primary ? 0 : border));
+        b.setOnClickListener(v -> action.run());
+        return b;
+    }
+    private void buildShell() {
+        root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(16), dp(8), dp(16), dp(8)); root.setBackgroundColor(bg);
+        setContentView(root);
+        toolbar = new LinearLayout(this); toolbar.setGravity(Gravity.CENTER_VERTICAL);
+        toolbar.setOrientation(LinearLayout.HORIZONTAL);
+        TextView brand = label("ILSpy", 23, text, true);
+        toolbar.addView(brand, new LinearLayout.LayoutParams(0, dp(52), 1));
+        toolbar.addView(button("＋ Abrir assembly", true, this::chooseFile));
+        root.addView(toolbar);
+        status = label("Inicializando motor…", 12, muted, false);
+        status.setPadding(dp(2), 0, 0, dp(12)); root.addView(status);
+        LinearLayout filebar = new LinearLayout(this); filebar.setOrientation(1);
+        filebar.setPadding(dp(14), dp(10), dp(14), dp(10)); filebar.setBackground(shape(panel, border));
+        title = label("Nenhum assembly aberto", 15, text, true);
+        filebar.addView(title);
+        TextView hint = label("Assembly Explorer   ›   C# Code", 11, muted, false);
+        filebar.addView(hint); root.addView(filebar);
+        LinearLayout tabs = new LinearLayout(this); tabs.setOrientation(0);
+        tabs.setPadding(0, dp(10), 0, dp(10));
+        tabs.addView(button("Explorer", false, () -> showResult(inspectResult.isEmpty() ? "Abra uma DLL ou EXE .NET para explorar seus assemblies." : inspectResult)));
+        tabs.addView(button("C# Code", true, () -> showResult(decompiled.isEmpty() ? "Selecione um assembly para descompilar." : decompiled)));
+        tabs.addView(button("Info", false, () -> showResult(currentFile == null ? "Nenhum arquivo selecionado." : currentFile.getName() + "\n" + currentFile.length() + " bytes\nCaminho: " + currentFile.getAbsolutePath())));
+        root.addView(tabs);
+        ScrollView scroll = new ScrollView(this);
+        content = new LinearLayout(this); content.setOrientation(1);
+        content.setPadding(dp(12), dp(12), dp(12), dp(12)); content.setBackground(shape(Color.rgb(248, 249, 251), border));
+        code = label("Bem-vindo ao ILSpy Mobile\n\nAbra um assembly .NET para navegar pelos namespaces, tipos e métodos e visualizar o código C# descompilado.", 13, Color.rgb(35, 42, 52), false);
+        code.setTypeface(Typeface.MONOSPACE); code.setGravity(Gravity.TOP | Gravity.START);
+        code.setTextIsSelectable(true); content.addView(code);
+        scroll.addView(content); root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        bottom = new LinearLayout(this); bottom.setGravity(Gravity.CENTER_VERTICAL);
+        bottom.addView(label("ICSharpCode.Decompiler · ILSpy engine", 11, muted, false), new LinearLayout.LayoutParams(0, dp(42), 1));
+        bottom.addView(button("Copiar código", false, () -> {
+            android.content.ClipboardManager cm = (android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("C# code", decompiled));
+        }));
+        root.addView(bottom);
+    }
+    private void showResult(String value) { code.setText(value == null ? "" : value); }
+    private void chooseFile() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.setType("*/*"); i.addCategory(Intent.CATEGORY_OPENABLE);
+        startActivityForResult(i, PICK_ASSEMBLY);
+    }
+    @Override protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request != PICK_ASSEMBLY || result != RESULT_OK || data == null || data.getData() == null) return;
+        Uri uri = data.getData();
+        try {
+            File target = new File(getCacheDir(), "imported-" + System.currentTimeMillis() + ".bin");
+            try (InputStream in = getContentResolver().openInputStream(uri);
+                 FileOutputStream out = new FileOutputStream(target)) {
+                if (in == null) throw new IllegalStateException("Não foi possível ler o arquivo selecionado.");
+                byte[] buf = new byte[65536]; int n;
+                while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+            }
+            currentFile = target;
+            title.setText(uri.getLastPathSegment() == null ? target.getName() : uri.getLastPathSegment());
+            status.setText("Analisando assembly localmente…");
+            inspectResult = NativeBridge.nativeInspect(target.getAbsolutePath());
+            decompiled = NativeBridge.nativeDecompile(target.getAbsolutePath());
+            showResult(decompiled);
+            status.setText("Assembly carregado · descompilação concluída");
+        } catch (Throwable e) {
+            status.setText("Falha ao abrir arquivo");
+            showResult(e.getClass().getSimpleName() + ": " + String.valueOf(e.getMessage()));
+        }
+    }
+}
+''', encoding="utf-8")
+
+manifest = root / "app/src/main/AndroidManifest.xml"
+xml = manifest.read_text(encoding="utf-8")
+if "com.ilspy.mobile.MainActivity" in xml:
+    xml = xml.replace("com.ilspy.mobile.MainActivity", "com.ilspy.mobile.WorkbenchActivity")
+elif ".MainActivity" in xml:
+    xml = xml.replace(".MainActivity", ".WorkbenchActivity")
+else:
+    raise SystemExit("Could not locate launcher MainActivity in AndroidManifest.xml")
+manifest.write_text(xml, encoding="utf-8")
+
 print("Patched to bundle engine as ABI-specific APK assets and load via dlopen; bridge no longer DT_NEEDED-links engine.")
