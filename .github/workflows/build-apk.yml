@@ -42,6 +42,9 @@ jobs:
           test -f "$RUNNER_TEMP/ilspy-mobile/app/build.gradle"
           test -f "$RUNNER_TEMP/ilspy-mobile/native/ILSpyEngine/Exports.cs"
 
+      - name: Patch native loading and diagnostics
+        run: python "$GITHUB_WORKSPACE/scripts/patch-native-loading.py" "$RUNNER_TEMP/ilspy-mobile"
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
