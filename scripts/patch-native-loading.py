@@ -3,6 +3,30 @@ from pathlib import Path
 import sys
 
 root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]
+cmake = root / "app/src/main/cpp/CMakeLists.txt"
+cmake.write_text("""cmake_minimum_required(VERSION 3.22.1)
+project(ilspy_mobile_bridge LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+set(ENGINE_DIR "${CMAKE_CURRENT_LIST_DIR}/../jniLibs/${ANDROID_ABI}")
+set(ENGINE_SO "${ENGINE_DIR}/libilspy_engine.so")
+if(NOT EXISTS "${ENGINE_SO}")
+    message(FATAL_ERROR "ILSpy NativeAOT engine is missing for ${ANDROID_ABI}. Run the build-managed-engine workflow step first.")
+endif()
+
+add_library(ilspy_bridge SHARED native-lib.cpp)
+target_compile_options(ilspy_bridge PRIVATE -Wall -Wextra -Werror=return-type)
+find_library(android-log log)
+
+# Do not link the imported .so by its absolute build-machine path.
+# Android's dynamic linker must see only the packaged soname.
+target_link_options(ilspy_bridge PRIVATE "-L${ENGINE_DIR}" "-Wl,--no-undefined")
+target_link_libraries(ilspy_bridge PRIVATE "-lilspy_engine" ${android-log})
+""", encoding="utf-8")
+
 bridge = root / "app/src/main/java/com/ilspy/mobile/NativeBridge.java"
 bridge.write_text("""package com.ilspy.mobile;
 
@@ -74,4 +98,4 @@ new = """    private void checkEngine() {
 if old not in text:
     raise SystemExit("Could not find exact checkEngine block; refusing to patch unexpected source")
 activity.write_text(text.replace(old, new), encoding="utf-8")
-print("Patched NativeBridge loading order and visible engine diagnostics.")
+print("Patched CMake soname linking, NativeBridge loading order, and engine diagnostics.")
