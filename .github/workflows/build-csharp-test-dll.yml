@@ -1,0 +1,35 @@
+name: Build CSharp Test DLL
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'test-assembly/**'
+      - '.github/workflows/build-csharp-test-dll.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-dll:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build managed DLL
+        run: dotnet build test-assembly/HelloWorld.Test/HelloWorld.Test.csproj --configuration Release
+      - name: Verify .NET metadata
+        run: |
+          test -s test-assembly/HelloWorld.Test/bin/Release/net8.0/HelloWorld.Test.dll
+          file test-assembly/HelloWorld.Test/bin/Release/net8.0/HelloWorld.Test.dll
+      - name: Upload DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: HelloWorld-CSharp-DLL
+          path: test-assembly/HelloWorld.Test/bin/Release/net8.0/HelloWorld.Test.dll
+          if-no-files-found: error
+          retention-days: 30
