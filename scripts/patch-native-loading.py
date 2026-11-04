@@ -286,6 +286,24 @@ picker_source = picker_pattern.sub(add_wildcard_picker, picker_source)
 if "Intent.ACTION_OPEN_DOCUMENT" in picker_source or "Intent.ACTION_GET_CONTENT" in picker_source:
     if not re.search(r"\.setType\(\s*[\"']\*/\*[\"']\s*\)", picker_source):
         raise SystemExit("File picker still has no wildcard MIME type; refusing to build a filtered APK")
+
+# Remove every restrictive MIME allow-list and force wildcard on all Android
+# document/content intents, including builders whose type was set later.
+picker_source = re.sub(
+    r'\.setType(?:AndNormalize)?\s*\([^;]*?\)',
+    '.setType("*/*")',
+    picker_source,
+)
+picker_source = re.sub(
+    r'\.putExtra\s*\(\s*Intent\.EXTRA_MIME_TYPES\s*,\s*(?:new\s+String\s*\[\s*\]\s*\{[^}]*\}|[^;]*?)\s*\)',
+    '',
+    picker_source,
+)
+picker_source = re.sub(
+    r'\.putExtra\s*\(\s*["\']android\.intent\.extra\.MIME_TYPES["\']\s*,[^;]*?\)',
+    '',
+    picker_source,
+)
 activity.write_text(picker_source, encoding="utf-8")
 
 print("Patched to bundle engine as ABI-specific APK assets and load via dlopen; bridge no longer DT_NEEDED-links engine.")
