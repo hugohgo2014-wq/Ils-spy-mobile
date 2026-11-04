@@ -31,13 +31,13 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ilspy-mobile"
           for chunk in "$GITHUB_WORKSPACE"/source-bundle/part-*.b64; do
             test -f "$chunk"
-            printf "%s %s bytes\n" "$(basename "$chunk")" "$(wc -c < "$chunk")"
+            printf "%s %s bytes\n" "$(basename "$chunk")" "$(wc -c < "$chunk")" >&2
             cat "$chunk"
           done | base64 --decode > "$RUNNER_TEMP/ILSpyMobile-source.zip"
           echo "Reconstructed source archive:"
           wc -c "$RUNNER_TEMP/ILSpyMobile-source.zip"
           sha256sum "$RUNNER_TEMP/ILSpyMobile-source.zip"
-          unzip -t "$RUNNER_TEMP/ILSpyMobile-source.zip"
+          unzip -tq "$RUNNER_TEMP/ILSpyMobile-source.zip"
           unzip -q "$RUNNER_TEMP/ILSpyMobile-source.zip" -d "$RUNNER_TEMP/ilspy-mobile"
           test -f "$RUNNER_TEMP/ilspy-mobile/app/build.gradle"
           test -f "$RUNNER_TEMP/ilspy-mobile/native/ILSpyEngine/Exports.cs"
