@@ -304,6 +304,16 @@ picker_source = re.sub(
     '',
     picker_source,
 )
+
+# Normalize picker creation after MIME filtering. The previous generic
+# substitution could leave a bare "intent;" expression in Java; remove it
+# and set the wildcard directly on each document-picker Intent.
+picker_source = re.sub(r'(?m)^[ \t]*intent;[ \t]*$', '', picker_source)
+picker_source = re.sub(
+    r'(Intent\s+intent\s*=\s*new\s+Intent\s*\(\s*Intent\.(?:ACTION_OPEN_DOCUMENT|ACTION_GET_CONTENT)\s*\)\s*;)',
+    r'\1\n        intent.setType("*/*");',
+    picker_source,
+)
 activity.write_text(picker_source, encoding="utf-8")
 
 print("Patched to bundle engine as ABI-specific APK assets and load via dlopen; bridge no longer DT_NEEDED-links engine.")
