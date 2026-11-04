@@ -53,14 +53,15 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Install Android SDK, NDK and CMake
+      - name: Install Android SDK command-line tools
         uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            platforms;android-36
-            build-tools;36.0.0
-            ndk;27.2.12479018
-            cmake;3.22.1
+
+      - name: Install Android SDK, NDK and CMake packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
 
       - name: Configure Android NDK environment
         shell: bash
@@ -73,7 +74,6 @@ jobs:
           echo "ANDROID_NDK_HOME=$NDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$NDK_ROOT" >> "$GITHUB_ENV"
           echo "$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
-          yes | sdkmanager --licenses >/dev/null || true
 
       - name: Install NativeAOT host dependencies
         run: |
