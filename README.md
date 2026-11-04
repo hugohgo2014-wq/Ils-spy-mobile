@@ -10,7 +10,7 @@ Android app built around the real **ICSharpCode.Decompiler** engine from ILSpy.
 
 ## Source
 
-The complete Android/Gradle/C++/C# project is in [ILSpyMobile-source.zip](./ILSpyMobile-source.zip). The GitHub Actions workflow automatically extracts this source bundle, builds the native engine, runs Android lint/unit-test tasks and assembles the APKs.
+The complete Android/Gradle/C++/C# project is encoded in [`source-bundle/`](./source-bundle/). GitHub Actions reconstructs the ZIP automatically for builds. The icon SVG and Android vector resources are included.
 
 ## Build
 
@@ -31,4 +31,4 @@ Artifacts:
 
 The .NET Android Bionic NativeAOT shared-library path is experimental and currently documents only `linux-bionic-arm64` and `linux-bionic-x64`. JNI is implemented manually in the C++ bridge. The project deliberately does not package an ABI without a matching decompiler engine.
 
-See the project README and `THIRD_PARTY_NOTICES.md` inside the source bundle for detailed setup, architecture and licensing.
+See `README.md` and `THIRD_PARTY_NOTICES.md` inside the source archive for setup, architecture and licensing.
