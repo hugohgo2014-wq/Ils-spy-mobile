@@ -272,19 +272,19 @@ builder.write_text(build_text.replace(copy_line, replacement), encoding="utf-8")
 # picker; the app's PE/CLI validation remains responsible for file contents.
 picker_source = activity.read_text(encoding="utf-8")
 picker_source = re.sub(
-    r"(\\b[A-Za-z_$][\\w$]*\\.setType\\()\\s*[^;]*?(\\);)",
-    r'\\1"*/*"\\2',
+    r"(\b[A-Za-z_$][\w$]*\.setType\()\s*[^;]*?(\);)",
+    r'\1"*/*"\2',
     picker_source,
 )
 picker_pattern = re.compile(
-    r"(Intent\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*new\\s+Intent\\s*\\(\\s*Intent\\.(?:ACTION_OPEN_DOCUMENT|ACTION_GET_CONTENT)\\s*\\)\\s*;)"
+    r"(Intent\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+Intent\s*\(\s*Intent\.(?:ACTION_OPEN_DOCUMENT|ACTION_GET_CONTENT)\s*\)\s*;)"
 )
 def add_wildcard_picker(match):
     statement, variable = match.group(1), match.group(2)
-    return statement + '\\n        ' + variable + '.setType("*/*");'
+    return statement + '\n        ' + variable + '.setType("*/*");'
 picker_source = picker_pattern.sub(add_wildcard_picker, picker_source)
 if "Intent.ACTION_OPEN_DOCUMENT" in picker_source or "Intent.ACTION_GET_CONTENT" in picker_source:
-    if not re.search(r"\\.setType\\(\\s*[\"']\\*/\\*[\"']\\s*\\)", picker_source):
+    if not re.search(r"\.setType\(\s*[\"']\*/\*[\"']\s*\)", picker_source):
         raise SystemExit("File picker still has no wildcard MIME type; refusing to build a filtered APK")
 activity.write_text(picker_source, encoding="utf-8")
 
