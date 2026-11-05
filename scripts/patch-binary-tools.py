@@ -33,7 +33,10 @@ if settings:
         if "mavenCentral()" not in block:
             additions += "\n        mavenCentral()"
         if "jitpack.io" not in block:
-            additions += "\n        maven { url 'https://jitpack.io' }"
+            if settings.suffix == ".kts":
+                additions += '\n        maven { url = uri("https://jitpack.io") }'
+            else:
+                additions += "\n        maven { url 'https://jitpack.io' }"
         if additions:
             text = text[:pos] + additions + text[pos:]
             settings.write_text(text, encoding="utf-8")
@@ -59,6 +62,7 @@ if "FetchContent_Declare(capstone" not in c:
     c += r'''
 
 include(FetchContent)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
 set(CAPSTONE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
