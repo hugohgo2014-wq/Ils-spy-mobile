@@ -48,30 +48,6 @@ jobs:
       - name: Add ELF, DEX and ARSC binary workbench
         run: python "$GITHUB_WORKSPACE/scripts/patch-binary-tools.py" "$RUNNER_TEMP/ilspy-mobile"
 
-      - name: Build custom Termux bootstrap for ILSpy Mobile
-        shell: bash
-        run: |
-          set -euo pipefail
-          TERMUX_DIR="$RUNNER_TEMP/termux-packages"
-          git clone --depth 1 --branch infra-improvs https://github.com/agnostic-apollo/termux-packages.git "$TERMUX_DIR"
-          cd "$TERMUX_DIR"
-          grep -n '^TERMUX_APP__PACKAGE_NAME' scripts/properties.sh
-          sed -i -E 's/^TERMUX_APP__PACKAGE_NAME=.*/TERMUX_APP__PACKAGE_NAME="com.ilspy.mobile"/' scripts/properties.sh
-          grep -n '^TERMUX_APP__PACKAGE_NAME' scripts/properties.sh
-          ./scripts/run-docker.sh ./clean.sh
-          ./scripts/run-docker.sh ./scripts/build-bootstraps.sh --architectures aarch64,x86_64 --no-build-unneeded-subpackages --packages-post-additional clang,cmake,ninja,git,python,make,pkg-config,binutils
-          mkdir -p "$RUNNER_TEMP/ilspy-mobile/app/src/main/assets/termux"
-          for arch in aarch64 x86_64; do
-            archive="$TERMUX_DIR/bootstrap-$arch.zip"
-            if [ ! -s "$archive" ]; then
-              archive="$(find "$TERMUX_DIR" -maxdepth 3 -type f -name "bootstrap-$arch.zip" -print -quit)"
-            fi
-            test -n "$archive" && test -s "$archive"
-            unzip -tq "$archive"
-            cp "$archive" "$RUNNER_TEMP/ilspy-mobile/app/src/main/assets/termux/bootstrap-$arch.zip"
-            echo "Bundled custom-prefix Termux bootstrap: $arch ($(wc -c < "$archive") bytes)"
-          done
-
       - name: Add integrated Termux startup, terminal and foreground service
         run: python "$GITHUB_WORKSPACE/scripts/patch-termux-environment.py" "$RUNNER_TEMP/ilspy-mobile"
 
@@ -104,7 +80,7 @@ jobs:
         run: |
           set -euo pipefail
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
 
       - name: Configure Android NDK environment
         shell: bash
@@ -112,11 +88,39 @@ jobs:
           set -euo pipefail
           SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
           test -n "$SDK_ROOT"
-          NDK_ROOT="$SDK_ROOT/ndk/27.2.12479018"
+          NDK_ROOT="$SDK_ROOT/ndk/28.2.13676358"
           test -d "$NDK_ROOT"
           echo "ANDROID_NDK_HOME=$NDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$NDK_ROOT" >> "$GITHUB_ENV"
           echo "$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: Build custom Termux bootstrap for ILSpy Mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          TERMUX_DIR="$RUNNER_TEMP/termux-packages"
+          git clone --depth 1 --branch infra-improvs https://github.com/agnostic-apollo/termux-packages.git "$TERMUX_DIR"
+          cd "$TERMUX_DIR"
+          grep -n '^TERMUX_APP__PACKAGE_NAME' scripts/properties.sh
+          sed -i -E 's/^TERMUX_APP__PACKAGE_NAME=.*/TERMUX_APP__PACKAGE_NAME="com.ilspy.mobile"/' scripts/properties.sh
+          grep -n '^TERMUX_APP__PACKAGE_NAME' scripts/properties.sh
+          ./scripts/run-docker.sh ./clean.sh
+          mkdir -p "$TERMUX_DIR/build-tools"
+          cp -a "$ANDROID_NDK_HOME" "$TERMUX_DIR/build-tools/android-ndk-r28c"
+          test -f "$TERMUX_DIR/build-tools/android-ndk-r28c/AndroidVersion.txt"
+          echo "Termux builder NDK: $TERMUX_DIR/build-tools/android-ndk-r28c"
+          ./scripts/run-docker.sh ./scripts/build-bootstraps.sh --architectures aarch64,x86_64 --no-build-unneeded-subpackages --packages-post-additional clang,cmake,ninja,git,python,make,pkg-config,binutils
+          mkdir -p "$RUNNER_TEMP/ilspy-mobile/app/src/main/assets/termux"
+          for arch in aarch64 x86_64; do
+            archive="$TERMUX_DIR/bootstrap-$arch.zip"
+            if [ ! -s "$archive" ]; then
+              archive="$(find "$TERMUX_DIR" -maxdepth 3 -type f -name "bootstrap-$arch.zip" -print -quit)"
+            fi
+            test -n "$archive" && test -s "$archive"
+            unzip -tq "$archive"
+            cp "$archive" "$RUNNER_TEMP/ilspy-mobile/app/src/main/assets/termux/bootstrap-$arch.zip"
+            echo "Bundled custom-prefix Termux bootstrap: $arch ($(wc -c < "$archive") bytes)"
+          done
 
       - name: Install NativeAOT host dependencies
         run: |
