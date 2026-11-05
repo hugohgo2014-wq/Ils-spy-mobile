@@ -617,6 +617,7 @@ public final class WorkbenchActivity extends Activity {
     }
 
     private void renderCode() {
+        final String preservedSource = sourceEditor == null ? decompiled : sourceEditor.getText().toString();
         body.removeAllViews();
         addSection("C# Decompiler");
         addInfoRow(selectedType.isEmpty() ? displayName : selectedType, "C# · código descompilado");
@@ -724,6 +725,7 @@ public final class WorkbenchActivity extends Activity {
                 while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
             }
             currentFile = target;
+            sourceEditor = null;
             selectedType = "";
             status.setText("Analisando " + displayName + "…");
             assemblyName.setText("Assemblies  ·  " + displayName);
@@ -1052,7 +1054,7 @@ ui = ui.replace(
 )
 ui = ui.replace(
     'toolbar.addView(actionButton("Abrir", true, this::chooseFile));\n        toolbar.addView(actionButton("Copiar", false, this::copyCode));',
-    'toolbar.addView(actionButton("▣ Abrir", true, this::chooseFile));\n        toolbar.addView(actionButton("⚒ Build", false, () -> { activeTab = TAB_CODE; updateTabs(); renderCode(); }));\n        toolbar.addView(actionButton("＋ Ref", false, this::chooseReference));'
+    'toolbar.addView(actionButton("▣ Abrir", true, this::chooseFile));\n        toolbar.addView(actionButton("⚒ Build", false, this::openCodeEditor));\n        toolbar.addView(actionButton("＋ Ref", false, this::chooseReference));'
 )
 
 old_render = """TextView editor = new TextView(this);
@@ -1080,7 +1082,7 @@ new_render = """LinearLayout buildBar = new LinearLayout(this);
         editHint.setPadding(dp(4), dp(7), dp(4), dp(5));
         body.addView(editHint);
         sourceEditor = new EditText(this);
-        sourceEditor.setText(highlightCSharp(decompiled));
+        sourceEditor.setText(highlightCSharp(preservedSource));
         sourceEditor.setTextSize(12);
         sourceEditor.setTypeface(Typeface.MONOSPACE);
         sourceEditor.setTextColor(editorFg);
@@ -1094,7 +1096,10 @@ new_render = """LinearLayout buildBar = new LinearLayout(this);
                 android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE |
                 android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         sourceEditor.setSingleLine(false);
-        sourceEditor.setTextIsSelectable(true);
+        sourceEditor.setTextIsSelectable(false);
+        sourceEditor.setFocusableInTouchMode(true);
+        sourceEditor.setFocusable(true);
+        sourceEditor.setClickable(false);
         sourceEditor.setElevation(dp(2));
         body.addView(sourceEditor, new LinearLayout.LayoutParams(-1, -2));
         TextView refHint = text("Dependências adicionais: use ＋ Ref na barra superior. " +
@@ -1246,6 +1251,17 @@ helpers = r'''    private File compilerReferencesDirectory() throws Exception {
         } catch (Throwable error) {
             status.setText("Falha ao salvar C#: " + error.getMessage());
         }
+    }
+
+    private void openCodeEditor() {
+        if (currentFile == null) {
+            status.setText("Abra primeiro uma DLL, EXE .NET ou WINMD.");
+            return;
+        }
+        activeTab = TAB_CODE;
+        updateTabs();
+        renderCode();
+        if (sourceEditor != null) sourceEditor.requestFocus();
     }
 
     private void recompileOrOpenEditor() {
