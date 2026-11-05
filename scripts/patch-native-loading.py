@@ -406,6 +406,7 @@ public final class WorkbenchActivity extends Activity {
                 handleCompilerResult(resultCode, resultData);
             }
         };
+        compilerWatchdogHandler = new Handler(Looper.getMainLooper());
         boolean ready = NativeBridge.initialize(getApplicationContext());
         status.setText(ready
                 ? "Motor ILSpy pronto · " + NativeBridge.nativeEngineVersion()
@@ -685,6 +686,11 @@ public final class WorkbenchActivity extends Activity {
         details.setPadding(dp(10), dp(10), dp(10), dp(10));
         details.setBackground(rounded(chrome, 0));
         body.addView(details, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    @Override protected void onDestroy() {
+        cancelCompilerWatchdog();
+        super.onDestroy();
     }
 
     private void chooseFile() {
@@ -1046,7 +1052,7 @@ ui = ui.replace(
 )
 ui = ui.replace(
     "private EditText search;\n    private File currentFile;",
-    "private EditText search, sourceEditor;\n    private File currentFile, pendingExport;\n    private String pendingExportName = \"\";\n    private boolean buildRunning;\n    private ResultReceiver compilerReceiver;"
+    "private EditText search, sourceEditor;\n    private File currentFile, pendingExport;\n    private String pendingExportName = \"\";\n    private boolean buildRunning;\n    private ResultReceiver compilerReceiver;\n    private android.os.Handler compilerWatchdogHandler;\n    private Runnable compilerWatchdog;\n    private int compilerGeneration;"
 )
 ui = ui.replace(
     "drawable.setColor(fill);\n        drawable.setCornerRadius(dp(8));",
@@ -1092,7 +1098,7 @@ new_render = """LinearLayout buildBar = new LinearLayout(this);
         editHint.setPadding(dp(4), dp(7), dp(4), dp(5));
         body.addView(editHint);
         sourceEditor = new EditText(this);
-        sourceEditor.setText(highlightCSharp(preservedSource));
+        sourceEditor.setText(preservedSource);
         sourceEditor.setTextSize(12);
         sourceEditor.setTypeface(Typeface.MONOSPACE);
         sourceEditor.setTextColor(editorFg);
@@ -1316,6 +1322,25 @@ helpers = r'''    private File compilerReferencesDirectory() throws Exception {
             showBuildDiagnostics(result);
         }
         buildRunning = false;
+        cancelCompilerWatchdog();
+    }
+
+    private void cancelCompilerWatchdog() {
+        if (compilerWatchdogHandler != null && compilerWatchdog != null)
+            compilerWatchdogHandler.removeCallbacks(compilerWatchdog);
+        compilerWatchdog = null;
+        compilerGeneration++;
+    }
+
+    private void onCompilerTimeout(int generation) {
+        if (!buildRunning || generation != compilerGeneration) return;
+        buildRunning = false;
+        compilerWatchdog = null;
+        status.setText("O compilador não respondeu dentro de 8 minutos. O ILSpy continua aberto.");
+        showBuildDiagnostics("O serviço isolado do Roslyn não enviou uma resposta em 8 minutos. " +
+                "Isso pode acontecer quando o Android encerra o processo por falta de memória. " +
+                "O editor não foi fechado. Verifique se há um arquivo de saída em: " +
+                new File(getCacheDir(), "ilspy-recompile").getAbsolutePath());
     }
 
     private void recompileSource(String kind) {
@@ -1377,6 +1402,9 @@ helpers = r'''    private File compilerReferencesDirectory() throws Exception {
                         service.putExtra("job", job);
                         service.putExtra("receiver", compilerReceiver);
                         startService(service);
+                        final int generation = ++compilerGeneration;
+                        compilerWatchdog = () -> onCompilerTimeout(generation);
+                        compilerWatchdogHandler.postDelayed(compilerWatchdog, 8L * 60L * 1000L);
                         status.setText("Roslyn compilando em processo isolado…");
                     } catch (Throwable error) {
                         buildRunning = false;
