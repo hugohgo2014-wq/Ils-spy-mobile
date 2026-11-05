@@ -686,25 +686,44 @@ public final class BinaryWorkbenchActivity extends Activity {
         // This location is executable on modern Android; code_cache/files are not.
         File libraryDir = new File(getApplicationInfo().nativeLibraryDir);
         File executable = new File(libraryDir, "libilspy_rizin.so");
-        File pluginDir = libraryDir;
-        File sleighDir = new File(prefix, "lib/rizin/plugins/rz_ghidra_sleigh");
+        // Keep the executable in nativeLibraryDir (Android W^X requirement), but
+        // load the Ghidra plugin only from the private Rizin plugin directory.
+        // Scanning nativeLibraryDir also loads unrelated .so files and caused
+        // duplicate plugin registration on some Android builds.
+        File pluginDir = new File(prefix, "lib/rizin/plugins");
+        File sleighDir = new File(pluginDir, "rz_ghidra_sleigh");
         if (!executable.isFile() || !new File(pluginDir, "core_ghidra.so").isFile() ||
-                !new File(sleighDir, "AARCH64.sla").isFile())
-            throw new IllegalStateException("Pacote Rizin/Ghidra incompleto no APK.");
+                !new File(sleighDir, "AARCH64.sla").isFile() ||
+                !new File(sleighDir, "AARCH64.ldefs").isFile())
+            throw new IllegalStateException("Pacote Rizin/Ghidra incompleto: plugin/SLEIGH AARCH64 ausente.");
+        String language = detectGhidraLanguage(elf);
+        File tempDir = new File(getCacheDir(), "rizin-tmp");
+        File homeDir = new File(getFilesDir(), "rizin-home");
+        if (!tempDir.isDirectory() && !tempDir.mkdirs())
+            throw new IOException("Não foi possível criar TMPDIR do Rizin: " + tempDir);
+        if (!homeDir.isDirectory() && !homeDir.mkdirs())
+            throw new IOException("Não foi possível criar HOME do Rizin: " + homeDir);
         ProcessBuilder builder = new ProcessBuilder(
                 executable.getAbsolutePath(), "-q", "-A",
                 "-e", "scr.color=false",
                 "-e", "ghidra.sleighhome=" + sleighDir.getAbsolutePath(),
+                "-e", "ghidra.lang=" + language,
                 "-c", "pdg @@F; q",
                 elf.getAbsolutePath());
         builder.directory(prefix);
         builder.redirectErrorStream(true);
         java.util.Map<String, String> env = builder.environment();
-        env.put("LD_LIBRARY_PATH", libraryDir.getAbsolutePath());
+        env.put("LD_LIBRARY_PATH", libraryDir.getAbsolutePath() + File.pathSeparator + pluginDir.getAbsolutePath());
         env.put("RZ_LIB_PLUGINS", pluginDir.getAbsolutePath());
         env.put("RZ_PREFIX", prefix.getAbsolutePath());
         env.put("RZ_MAGICPATH", new File(prefix, "share/rizin/magic").getAbsolutePath());
         env.put("RZ_DATAHOME", new File(getFilesDir(), "rizin-data").getAbsolutePath());
+        env.put("RZ_USER_HOME", homeDir.getAbsolutePath());
+        env.put("RZ_CACHE_HOME", new File(getCacheDir(), "rizin-cache").getAbsolutePath());
+        env.put("HOME", homeDir.getAbsolutePath());
+        env.put("TMPDIR", tempDir.getAbsolutePath());
+        env.put("TMP", tempDir.getAbsolutePath());
+        env.put("TEMP", tempDir.getAbsolutePath());
         File logFile = new File(getCacheDir(), "rizin-ghidra-output.txt");
         builder.redirectOutput(logFile);
         Process process = builder.start();
@@ -733,6 +752,24 @@ public final class BinaryWorkbenchActivity extends Activity {
                 !lower.contains("undefined") && !lower.contains("ulong"))
             throw new IOException("Nenhuma função foi descompilada. Verifique símbolos/arquitetura do ELF.\\n" + result);
         return result;
+    }
+
+    private String detectGhidraLanguage(File elf) throws Exception {
+        try (RandomAccessFile file = new RandomAccessFile(elf, "r")) {
+            if (file.length() < 20) throw new IOException("ELF truncado: cabeçalho incompleto.");
+            byte[] header = new byte[20];
+            file.readFully(header);
+            if (header[0] != 0x7f || header[1] != 'E' || header[2] != 'L' || header[3] != 'F')
+                throw new IOException("Arquivo selecionado não é um ELF válido.");
+            boolean littleEndian = header[5] == 1;
+            int machine = littleEndian
+                    ? ((header[19] & 0xff) << 8) | (header[18] & 0xff)
+                    : ((header[18] & 0xff) << 8) | (header[19] & 0xff);
+            if (machine == 183 && littleEndian) return "AARCH64:LE:64:v8A";
+            if (machine == 62 && littleEndian) return "x86:LE:64:default";
+            if (machine == 40 && littleEndian) return "ARM:LE:32:v8";
+            throw new IOException("Arquitetura ELF não suportada pelo Ghidra: e_machine=" + machine);
+        }
     }
 
     private EditText field(String hint) {
