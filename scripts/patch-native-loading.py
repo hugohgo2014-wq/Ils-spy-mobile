@@ -327,9 +327,13 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
+import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.ResultReceiver;
 import android.provider.OpenableColumns;
 import android.text.Editable;
 import android.text.SpannableString;
@@ -397,6 +401,11 @@ public final class WorkbenchActivity extends Activity {
         getWindow().setStatusBarColor(chrome);
         getWindow().setNavigationBarColor(chrome);
         buildShell();
+        compilerReceiver = new ResultReceiver(new Handler(Looper.getMainLooper())) {
+            @Override protected void onReceiveResult(int resultCode, Bundle resultData) {
+                handleCompilerResult(resultCode, resultData);
+            }
+        };
         boolean ready = NativeBridge.initialize(getApplicationContext());
         status.setText(ready
                 ? "Motor ILSpy pronto · " + NativeBridge.nativeEngineVersion()
@@ -1037,7 +1046,8 @@ ui = ui.replace(
 )
 ui = ui.replace(
     "private EditText search;\n    private File currentFile;",
-    "private EditText search, sourceEditor;\n    private File currentFile, pendingExport;\n    private String pendingExportName = \"\";\n    private boolean buildRunning;"
+    "private EditText search, sourceEditor;\n    private File currentFile, pendingExport;\n    private String pendingExportName = \"\";\n    private boolean buildRunning;
+    private ResultReceiver compilerReceiver;"
 )
 ui = ui.replace(
     "drawable.setColor(fill);\n        drawable.setCornerRadius(dp(8));",
@@ -1282,6 +1292,33 @@ helpers = r'''    private File compilerReferencesDirectory() throws Exception {
         recompileSource("dll");
     }
 
+    private void handleCompilerResult(int resultCode, Bundle data) {
+        String result = data == null ? "COMPILE_ERROR: resposta vazia" :
+                data.getString("result", "COMPILE_ERROR: resposta vazia");
+        String outputPath = data == null ? "" : data.getString("outputPath", "");
+        File outputFile = outputPath.isEmpty() ? null : new File(outputPath);
+        if (resultCode == RESULT_OK && result.startsWith("COMPILE_OK") &&
+                outputFile != null && outputFile.isFile() && outputFile.length() > 0) {
+            pendingExport = outputFile;
+            pendingExportName = outputFile.getName();
+            status.setText("Compilado: " + outputFile.length() + " bytes · abrindo Salvar como…");
+            try {
+                Intent create = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                create.addCategory(Intent.CATEGORY_OPENABLE);
+                create.setType("application/octet-stream");
+                create.putExtra(Intent.EXTRA_TITLE, outputFile.getName());
+                startActivityForResult(create, PICK_OUTPUT);
+            } catch (Throwable error) {
+                status.setText("Compilado, mas o seletor falhou: " + error.getMessage());
+                showBuildDiagnostics("Arquivo no cache privado:\\n" + outputFile.getAbsolutePath() + "\\n" + error);
+            }
+        } else {
+            status.setText("Falha na recompilação · veja Build Output");
+            showBuildDiagnostics(result);
+        }
+        buildRunning = false;
+    }
+
     private void recompileSource(String kind) {
         if (buildRunning) {
             status.setText("Uma compilação já está em andamento.");
@@ -1330,43 +1367,31 @@ helpers = r'''    private File compilerReferencesDirectory() throws Exception {
                 File customRefs = userReferencesDirectory();
                 String references = frameworkRefs.getAbsolutePath() + ";" +
                         customRefs.getAbsolutePath();
-                String result = NativeBridge.nativeRecompile(
-                        sourceFile.getAbsolutePath(), outputFile.getAbsolutePath(),
-                        references, kind, baseName);
-
-                if (result == null || !result.startsWith("COMPILE_OK")) {
-                    final String diagnostic = result == null
-                            ? "O compilador não retornou resultado." : result;
-                    runOnUiThread(() -> {
-                        buildRunning = false;
-                        status.setText("Falha na recompilação · consulte Build Output");
-                        showBuildDiagnostics(diagnostic);
-                    });
-                    return;
-                }
-                if (!outputFile.isFile() || outputFile.length() == 0) {
-                    runOnUiThread(() -> {
-                        buildRunning = false;
-                        status.setText("O compilador informou sucesso, mas não criou o arquivo.");
-                        showBuildDiagnostics(result);
-                    });
-                    return;
-                }
-
+                Bundle job = new Bundle();
+                job.putString("sourcePath", sourceFile.getAbsolutePath());
+                job.putString("outputPath", outputFile.getAbsolutePath());
+                job.putString("references", references);
+                job.putString("kind", kind);
+                job.putString("assemblyName", baseName);
                 runOnUiThread(() -> {
-                    buildRunning = false;
-                    if (isFinishing() || isDestroyed()) return;
-                    pendingExport = outputFile;
-                    pendingExportName = outputFile.getName();
-                    status.setText("Compilação concluída · " + outputFile.length() +
-                            " bytes · abrindo seletor para salvar…");
+                    if (isFinishing() || isDestroyed()) {
+                        buildRunning = false;
+                        return;
+                    }
                     try {
-                        Intent create = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-                        create.addCategory(Intent.CATEGORY_OPENABLE);
-                        create.setType("application/octet-stream");
-                        create.putExtra(Intent.EXTRA_TITLE, outputFile.getName());
-                        startActivityForResult(create, PICK_OUTPUT);
+                        Intent service = new Intent(WorkbenchActivity.this, CompilerService.class);
+                        service.putExtra("job", job);
+                        service.putExtra("receiver", compilerReceiver);
+                        startService(service);
+                        status.setText("Roslyn compilando em processo isolado…");
                     } catch (Throwable error) {
+                        buildRunning = false;
+                        status.setText("Não foi possível iniciar o compilador: " + error.getMessage());
+                        showBuildDiagnostics(String.valueOf(error));
+                    }
+                });
+                return;
+            } catch (Throwable error) {
                         status.setText("Compilado, mas o seletor não abriu: " + error.getMessage());
                         showBuildDiagnostics("O arquivo continua no cache privado do app:\\n" +
                                 outputFile.getAbsolutePath() + "\\n\\n" + error);
@@ -1404,6 +1429,93 @@ if helper_marker not in ui:
 ui = ui.replace(helper_marker, helpers + helper_marker)
 
 workbench.write_text(ui, encoding="utf-8")
+
+# Run Roslyn in its own Android process so native/OOM failures cannot kill the UI.
+compiler_service = root / "app/src/main/java/com/ilspy/mobile/CompilerService.java"
+compiler_service.write_text(r'''package com.ilspy.mobile;
+
+import android.app.IntentService;
+import android.content.Intent;
+import android.os.Bundle;
+import android.os.ResultReceiver;
+import android.util.Log;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+
+@SuppressWarnings("deprecation")
+public final class CompilerService extends IntentService {
+    public CompilerService() { super("ILSpyCompiler"); }
+
+    @Override protected void onHandleIntent(Intent intent) {
+        Bundle job = intent == null ? null : intent.getBundleExtra("job");
+        ResultReceiver receiver = intent == null ? null : intent.getParcelableExtra("receiver");
+        String outputPath = job == null ? "" : job.getString("outputPath", "");
+        String result;
+        try {
+            if (job == null || receiver == null)
+                throw new IllegalArgumentException("Pedido de recompilação incompleto.");
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+            if (!NativeBridge.initialize(getApplicationContext()))
+                throw new IllegalStateException("NativeAOT indisponível: " + NativeBridge.loadError());
+            File framework = compilerReferencesDirectory();
+            File custom = new File(getFilesDir(), "ilspy-user-refs");
+            if (!custom.exists() && !custom.mkdirs())
+                throw new IllegalStateException("Não foi possível abrir a pasta de referências personalizadas.");
+            String references = framework.getAbsolutePath() + ";" + custom.getAbsolutePath();
+            result = NativeBridge.nativeRecompile(
+                    job.getString("sourcePath", ""), outputPath, references,
+                    job.getString("kind", "dll"), job.getString("assemblyName", "RebuiltAssembly"));
+            if (result == null) result = "COMPILE_ERROR: o compilador não retornou resposta.";
+        } catch (Throwable error) {
+            result = "COMPILE_ERROR: " + error.getClass().getSimpleName() + ": " + error.getMessage();
+            Log.e("ILSpyCompiler", result, error);
+        }
+        if (receiver != null) {
+            Bundle response = new Bundle();
+            response.putString("result", result);
+            response.putString("outputPath", outputPath);
+            File output = outputPath.isEmpty() ? null : new File(outputPath);
+            response.putLong("outputLength", output != null && output.isFile() ? output.length() : 0L);
+            receiver.send(0, response);
+        }
+    }
+
+    private File compilerReferencesDirectory() throws Exception {
+        File directory = new File(getFilesDir(), "ilspy-compiler-refs");
+        if (!directory.exists() && !directory.mkdirs())
+            throw new IllegalStateException("Não foi possível criar a pasta de referências .NET.");
+        String[] assets = getAssets().list("compiler-refs");
+        if (assets == null || assets.length == 0)
+            throw new IllegalStateException("O APK não contém as referências .NET.");
+        for (String name : assets) {
+            if (!name.endsWith(".dll")) continue;
+            File target = new File(directory, name);
+            if (target.isFile() && target.length() > 0) continue;
+            try (InputStream input = getAssets().open("compiler-refs/" + name);
+                 FileOutputStream output = new FileOutputStream(target, false)) {
+                byte[] buffer = new byte[65536];
+                int count;
+                while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                output.getFD().sync();
+            }
+        }
+        return directory;
+    }
+}
+''', encoding="utf-8")
+
+manifest = root / "app/src/main/AndroidManifest.xml"
+xml = manifest.read_text(encoding="utf-8")
+if "CompilerService" not in xml:
+    xml = xml.replace(
+        "</application>",
+        '        <service android:name=".CompilerService" android:exported="false" android:process=":compiler" />\\n    </application>'
+    )
+manifest.write_text(xml, encoding="utf-8")
+
+print("Roslyn recompiles in isolated process :compiler; the ILSpy UI survives compiler process failures.")
 
 print("Added Roslyn editor/recompiler for managed DLL/EXE and WINMDOBJ intermediate; ILSpy decompiler code untouched.")
 
