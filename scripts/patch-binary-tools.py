@@ -159,10 +159,10 @@ if "nativeDisassembleElf(" not in b:
 # Add a launcher action to the existing workbench after its generated toolbar is finalized.
 w = workbench.read_text(encoding="utf-8")
 if "BinaryWorkbenchActivity.class" not in w:
-    anchor = 'toolbar.addView(actionButton("＋ Ref", false, this::chooseReference));'
+    anchor = "root.addView(toolbar);"
     if anchor not in w:
-        raise SystemExit("Could not find the finalized workbench toolbar anchor")
-    w = w.replace(anchor, anchor + '\n        toolbar.addView(actionButton("Binary Lab", false, () ->\n                startActivity(new Intent(this, BinaryWorkbenchActivity.class))));', 1)
+        raise SystemExit("Could not find the finalized workbench toolbar container")
+    w = w.replace(anchor, anchor + '\n        Button binaryLabButton = actionButton("▣  BINARY LAB · SO / DEX / ARSC", false, () ->\n                startActivity(new Intent(this, BinaryWorkbenchActivity.class)));\n        root.addView(binaryLabButton, new LinearLayout.LayoutParams(-1, dp(42)));', 1)
     workbench.write_text(w, encoding="utf-8")
 
 # Register the additional non-exported screen.
