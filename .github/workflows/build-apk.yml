@@ -106,6 +106,19 @@ jobs:
           git clone --depth 1 --branch infra-improvs https://github.com/agnostic-apollo/termux-packages.git "$TERMUX_DIR"
           cd "$TERMUX_DIR"
 
+          # DocBook moved its historical XML DTD archives to archive.docbook.org.
+          # The old docbook.org URLs return HTTP 404; keep the upstream SHA-256
+          # pins intact and change only the download host.
+          DOCBOOK_BUILD="$TERMUX_DIR/packages/docbook-xml/build.sh"
+          test -f "$DOCBOOK_BUILD"
+          sed -i 's#https://docbook.org/xml/#https://archive.docbook.org/xml/#g' "$DOCBOOK_BUILD"
+          test "$(grep -c 'https://archive.docbook.org/xml/' "$DOCBOOK_BUILD")" -eq 5
+          if grep -Fq 'https://docbook.org/xml/' "$DOCBOOK_BUILD"; then
+            echo "DocBook legacy download URL remains in build.sh" >&2
+            exit 1
+          fi
+          grep 'termux_download "https://archive.docbook.org/xml/' "$DOCBOOK_BUILD"
+
           # Set the application id before generating bootstrap metadata.
           sed -i -E 's/^TERMUX_APP__PACKAGE_NAME=.*/TERMUX_APP__PACKAGE_NAME="com.ilspy.mobile"/' scripts/properties.sh
           grep -n '^TERMUX_APP__PACKAGE_NAME' scripts/properties.sh
