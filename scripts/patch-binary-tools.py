@@ -46,6 +46,8 @@ else:
     raise SystemExit("settings.gradle(.kts) was not found")
 
 g = gradle.read_text(encoding="utf-8")
+if "useLegacyPackaging" not in g:
+    g = re.sub(r"(?m)^android\s*\{", "android {\\n    packagingOptions {\\n        jniLibs { useLegacyPackaging true }\\n    }", g, count=1)
 dependency = "    implementation 'org.apktool:apktool-lib:3.0.3'\n    implementation 'com.github.iBotPeaches.smali:smali:b6365a84f4'"
 if "org.apktool:apktool-lib" not in g:
     match = re.search(r"(?m)^dependencies\s*\{", g)
@@ -593,6 +595,8 @@ public final class BinaryWorkbenchActivity extends Activity {
                     displayedCodeFile = result;
                     displayedCodeOffset = 0;
                     loadNextCodeChunk(true);
+                    content.addView(button("Carregar próximo bloco", false,
+                            () -> loadNextCodeChunk(false)));
                     workProgress.setVisibility(View.GONE);
                     status.setText("Ghidra terminou · " + result.length() + " bytes · blocos de 48 KiB");
                     content.addView(button("Salvar pseudocódigo C (.c)", true,
