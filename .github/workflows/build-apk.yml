@@ -110,6 +110,14 @@ jobs:
           sed -i -E 's/^TERMUX_APP__PACKAGE_NAME=.*/TERMUX_APP__PACKAGE_NAME="com.ilspy.mobile"/' scripts/properties.sh
           grep -n '^TERMUX_APP__PACKAGE_NAME' scripts/properties.sh
 
+          # Codeberg regenerated the foot 1.23.1 source archive. The pinned
+          # Termux recipe checksum is stale; pin the exact SHA-256 observed
+          # from the successful HTTPS download in CI (do not disable checking).
+          FOOT_BUILD="$TERMUX_DIR/x11-packages/foot/build.sh"
+          test -f "$FOOT_BUILD"
+          sed -i 's/^TERMUX_PKG_SHA256=02072b8f0aaf26907b6b02293c875539ce52fc59079344e7cf811ab03394cfa3$/TERMUX_PKG_SHA256=b3fa774983abb5f95aecca4557d146091d8666bc65fb310d4d3e38327357ade9/' "$FOOT_BUILD"
+          grep '^TERMUX_PKG_SHA256=' "$FOOT_BUILD"
+
           # Build the builder image from the SAME pinned Termux branch.
           # The published :latest image currently contains NDK r30, while
           # infra-improvs pins NDK r28c and its matching checksum.
