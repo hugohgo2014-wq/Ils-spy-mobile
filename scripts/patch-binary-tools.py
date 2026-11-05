@@ -194,6 +194,10 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.ProgressBar;
+import android.content.ClipboardManager;
+import android.content.ClipData;
+import android.view.Choreographer;
 
 import brut.androlib.ApkDecoder;
 import brut.androlib.Config;
@@ -230,7 +234,13 @@ public final class BinaryWorkbenchActivity extends Activity {
     private final int dim = Color.rgb(164, 177, 192);
 
     private LinearLayout root, content, classList;
-    private TextView status, output;
+    private TextView status, output, fpsLabel;
+    private ProgressBar workProgress;
+    private final StringBuilder debugLog = new StringBuilder();
+    private long fpsWindowStart = System.nanoTime();
+    private int fpsFrames = 0;
+    private File displayedCodeFile;
+    private long displayedCodeOffset = 0;
     private EditText editor, patchOffset, patchBytes;
     private File opened, workspace, selectedSmali, pendingSave;
     private String pendingSaveName = "";
@@ -292,9 +302,28 @@ public final class BinaryWorkbenchActivity extends Activity {
         top.setOrientation(LinearLayout.HORIZONTAL);
         TextView title = label("ILSpy  /  BINARY LAB", 18, fg, true);
         top.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
+        top.addView(button("Copiar log", false, this::copyDebugLog));
         top.addView(button("Abrir arquivo", true, this::chooseFile));
         root.addView(top);
+        fpsLabel = label("FPS: --", 10, dim, false);
+        root.addView(fpsLabel);
+        Choreographer.getInstance().postFrameCallback(new Choreographer.FrameCallback() {
+            @Override public void doFrame(long frameTimeNanos) {
+                fpsFrames++;
+                long now = System.nanoTime();
+                if (now - fpsWindowStart >= 1000000000L) {
+                    fpsLabel.setText("FPS: " + fpsFrames);
+                    fpsFrames = 0;
+                    fpsWindowStart = now;
+                }
+                Choreographer.getInstance().postFrameCallback(this);
+            }
+        });
         status = label("Suporte: .so · .dex · .arsc", 11, dim, false);
+        workProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        workProgress.setIndeterminate(true);
+        workProgress.setVisibility(View.GONE);
+        root.addView(workProgress, new LinearLayout.LayoutParams(-1, dp(3)));
         status.setPadding(dp(4), dp(6), dp(4), dp(8));
         root.addView(status);
 
@@ -317,7 +346,26 @@ public final class BinaryWorkbenchActivity extends Activity {
         content.addView(output, new LinearLayout.LayoutParams(-1, -2));
     }
 
+    private void logEvent(String message) {
+        String line = System.currentTimeMillis() + " | " + message;
+        android.util.Log.i("ILSpyMobile", line);
+        synchronized (debugLog) {
+            debugLog.append(line).append('\n');
+            if (debugLog.length() > 240000) debugLog.delete(0, debugLog.length() - 240000);
+        }
+    }
+
+    private void copyDebugLog() {
+        String value;
+        synchronized (debugLog) { value = debugLog.toString(); }
+        if (value.isEmpty()) value = "ILSpy Mobile: sem eventos.";
+        ClipboardManager clipboard = (ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+        clipboard.setPrimaryClip(ClipData.newPlainText("ILSpy Mobile log", value));
+        status.setText("Log copiado: " + value.length() + " caracteres");
+    }
+
     private void chooseFile() {
+        logEvent("Abrir arquivo");
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.setType("*/*");
         i.addCategory(Intent.CATEGORY_OPENABLE);
@@ -524,11 +572,15 @@ public final class BinaryWorkbenchActivity extends Activity {
             status.setText("Abra um arquivo .so primeiro.");
             return;
         }
+        logEvent("Iniciando Ghidra para " + opened.getName() + " (" + opened.length() + " bytes)");
         status.setText("Preparando Ghidra native decompiler…");
+        workProgress.setVisibility(View.VISIBLE);
         new Thread(() -> {
             try {
                 File prefix = ensureRizinBundle();
+                logEvent("Rizin bundle pronto: " + prefix);
                 String code = runRizinGhidra(prefix, opened);
+                logEvent("Ghidra retornou " + code.length() + " caracteres");
                 if (code.trim().isEmpty())
                     throw new IllegalStateException("Ghidra não retornou pseudocódigo para este ELF.");
                 String banner = "/* Pseudocódigo C reconstruído pelo Ghidra decompiler.\\n" +
@@ -538,19 +590,46 @@ public final class BinaryWorkbenchActivity extends Activity {
                 Files.write(result.toPath(), (banner + code).getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 runOnUiThread(() -> {
                     decompiledCFile = result;
-                    output.setText(banner + code);
-                    status.setText("Ghidra terminou · " + result.length() + " bytes de pseudocódigo C");
+                    displayedCodeFile = result;
+                    displayedCodeOffset = 0;
+                    loadNextCodeChunk(true);
+                    workProgress.setVisibility(View.GONE);
+                    status.setText("Ghidra terminou · " + result.length() + " bytes · blocos de 48 KiB");
                     content.addView(button("Salvar pseudocódigo C (.c)", true,
                             () -> requestSave(decompiledCFile, decompiledCFile.getName())));
                 });
             } catch (Throwable error) {
                 runOnUiThread(() -> {
+                    workProgress.setVisibility(View.GONE);
+                    logEvent("GHIDRA_ERROR: " + error.getClass().getSimpleName() + ": " + error.getMessage());
                     status.setText("Falha na descompilação Ghidra: " + error.getMessage());
                     output.setText("GHIDRA_ERROR: " + error.getClass().getSimpleName() +
                             "\\n" + error.getMessage());
                 });
             }
         }, "ghidra-native-decompiler").start();
+    }
+
+    private void loadNextCodeChunk(boolean reset) {
+        if (displayedCodeFile == null || !displayedCodeFile.isFile()) return;
+        try (RandomAccessFile file = new RandomAccessFile(displayedCodeFile, "r")) {
+            if (reset) { displayedCodeOffset = 0; output.setText(""); }
+            if (displayedCodeOffset >= file.length()) {
+                status.setText("Fim do pseudocódigo.");
+                return;
+            }
+            file.seek(displayedCodeOffset);
+            int amount = (int)Math.min(48 * 1024, file.length() - displayedCodeOffset);
+            byte[] bytes = new byte[amount];
+            file.readFully(bytes);
+            output.append(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
+            displayedCodeOffset += amount;
+            status.setText("Pseudocódigo carregado: " + displayedCodeOffset + " / " + file.length() + " bytes");
+            logEvent("Bloco C carregado " + displayedCodeOffset + "/" + file.length());
+        } catch (Throwable error) {
+            logEvent("Erro ao carregar bloco C: " + error);
+            status.setText("Erro ao carregar bloco: " + error.getMessage());
+        }
     }
 
     private File ensureRizinBundle() throws Exception {
