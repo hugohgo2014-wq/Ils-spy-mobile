@@ -12,9 +12,6 @@ fi
 command -v cmake >/dev/null
 command -v git >/dev/null
 command -v python3 >/dev/null
-python3 -m pip install --user meson ninja
-export PATH="$HOME/.local/bin:$PATH"
-
 mkdir -p "$WORK"
 RIZIN_SRC="$WORK/rizin"
 GHIDRA_SRC="$WORK/rz-ghidra"
@@ -62,8 +59,8 @@ build_one_abi() {
   mkdir -p "$prefix"
   cat > "$cross" <<EOF
 [binaries]
-c = '$toolbin/$triple"33-clang'
-cpp = '$toolbin/$triple"33-clang++'
+c = '$toolbin/${triple}33-clang'
+cpp = '$toolbin/${triple}33-clang++'
 ar = '$toolbin/llvm-ar'
 as = '$toolbin/$triple-as'
 ranlib = '$toolbin/$triple-ranlib'
