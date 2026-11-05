@@ -185,6 +185,7 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -200,9 +201,12 @@ import brut.androlib.smali.SmaliDecoder;
 import com.android.tools.smali.smali.Smali;
 import com.android.tools.smali.smali.SmaliOptions;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -229,6 +233,7 @@ public final class BinaryWorkbenchActivity extends Activity {
     private EditText editor, patchOffset, patchBytes;
     private File opened, workspace, selectedSmali, pendingSave;
     private String pendingSaveName = "";
+    private File decompiledCFile;
     private int currentKind;
 
     private static final int KIND_NONE = 0, KIND_SO = 1, KIND_DEX = 2, KIND_ARSC = 3;
@@ -501,7 +506,141 @@ public final class BinaryWorkbenchActivity extends Activity {
         content.addView(patchOffset);
         patchBytes = field("Bytes hexadecimais (ex.: 1F 20 03 D5)");
         content.addView(patchBytes);
-        content.addView(button("Criar cópia .so com patch", true, () -> patchElf(info)));
+        content.addView(button("Criar cópia .so com patch", false, () -> patchElf(info)));
+        TextView decompilerNote = label("Descompilação nativa Ghidra · reconstrói pseudocódigo C; não recupera nomes, comentários ou o código-fonte original.", 11, dim, false);
+        decompilerNote.setPadding(0, dp(12), 0, dp(5));
+        content.addView(decompilerNote);
+        content.addView(button("Descompilar .so para código C (Ghidra)", true, this::decompileElfToC));
+    }
+
+    private void decompileElfToC() {
+        if (opened == null || !opened.isFile()) {
+            status.setText("Abra um arquivo .so primeiro.");
+            return;
+        }
+        status.setText("Preparando Ghidra native decompiler…");
+        new Thread(() -> {
+            try {
+                File prefix = ensureRizinBundle();
+                String code = runRizinGhidra(prefix, opened);
+                if (code.trim().isEmpty())
+                    throw new IllegalStateException("Ghidra não retornou pseudocódigo para este ELF.");
+                String banner = "/* Pseudocódigo C reconstruído pelo Ghidra decompiler.\\n" +
+                        " * Não é o fonte C/C++ original. Símbolos removidos e otimizações limitam a reconstrução.\\n */\\n\\n";
+                File result = new File(getCacheDir(),
+                        opened.getName().replaceAll("(?i)\\\\.so$", "") + "-decompiled.c");
+                Files.write(result.toPath(), (banner + code).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                runOnUiThread(() -> {
+                    decompiledCFile = result;
+                    output.setText(banner + code);
+                    status.setText("Ghidra terminou · " + result.length() + " bytes de pseudocódigo C");
+                    content.addView(button("Salvar pseudocódigo C (.c)", true,
+                            () -> requestSave(decompiledCFile, decompiledCFile.getName())));
+                });
+            } catch (Throwable error) {
+                runOnUiThread(() -> {
+                    status.setText("Falha na descompilação Ghidra: " + error.getMessage());
+                    output.setText("GHIDRA_ERROR: " + error.getClass().getSimpleName() +
+                            "\\n" + error.getMessage());
+                });
+            }
+        }, "ghidra-native-decompiler").start();
+    }
+
+    private File ensureRizinBundle() throws Exception {
+        String selectedAbi = null;
+        for (String abi : Build.SUPPORTED_ABIS) {
+            if ("arm64-v8a".equals(abi) || "x86_64".equals(abi)) {
+                selectedAbi = abi;
+                break;
+            }
+        }
+        if (selectedAbi == null)
+            throw new IllegalStateException("Este APK não contém o decompilador para a ABI deste dispositivo.");
+        File prefix = new File(getCodeCacheDir(), "rizin-" + selectedAbi);
+        File executable = new File(prefix, "bin/rizin");
+        File marker = new File(prefix, ".ready");
+        if (!marker.isFile() || !executable.isFile()) {
+            deleteTree(prefix);
+            if (!prefix.mkdirs()) throw new IllegalStateException("Não foi possível preparar o Rizin.");
+            copyAssetTree("native-decompiler/" + selectedAbi, prefix);
+            if (!executable.setExecutable(true, true))
+                throw new IllegalStateException("Android não permitiu executar o binário Rizin.");
+            File libs = new File(prefix, "lib");
+            File[] libraryFiles = libs.listFiles();
+            if (libraryFiles != null) {
+                for (File library : libraryFiles) {
+                    if (library.isFile()) library.setReadable(true, true);
+                }
+            }
+            if (!marker.createNewFile()) throw new IllegalStateException("Não foi possível finalizar a instalação do Rizin.");
+        }
+        return prefix;
+    }
+
+    private void copyAssetTree(String assetPath, File target) throws Exception {
+        String[] children = getAssets().list(assetPath);
+        if (children != null && children.length > 0) {
+            if (!target.exists() && !target.mkdirs())
+                throw new IllegalStateException("Não foi possível criar " + target.getName());
+            for (String child : children) copyAssetTree(assetPath + "/" + child, new File(target, child));
+            return;
+        }
+        File parent = target.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs())
+            throw new IllegalStateException("Não foi possível criar pasta de assets.");
+        try (InputStream in = getAssets().open(assetPath);
+             FileOutputStream out = new FileOutputStream(target, false)) {
+            byte[] buffer = new byte[65536];
+            int count;
+            while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
+            out.flush();
+        }
+    }
+
+    private String runRizinGhidra(File prefix, File elf) throws Exception {
+        File executable = new File(prefix, "bin/rizin");
+        File libraryDir = new File(prefix, "lib");
+        File pluginDir = new File(prefix, "lib/rizin/plugins");
+        File sleighDir = new File(pluginDir, "rz_ghidra_sleigh");
+        if (!executable.isFile() || !new File(pluginDir, "core_ghidra.so").isFile() ||
+                !new File(sleighDir, "AARCH64.sla").isFile())
+            throw new IllegalStateException("Pacote Rizin/Ghidra incompleto no APK.");
+        ProcessBuilder builder = new ProcessBuilder(
+                executable.getAbsolutePath(), "-q", "-A",
+                "-e", "scr.color=false",
+                "-e", "ghidra.sleighhome=" + sleighDir.getAbsolutePath(),
+                "-c", "pdg @@F; q",
+                elf.getAbsolutePath());
+        builder.directory(prefix);
+        builder.redirectErrorStream(true);
+        java.util.Map<String, String> env = builder.environment();
+        env.put("LD_LIBRARY_PATH", libraryDir.getAbsolutePath());
+        env.put("RZ_LIBR_PLUGINS", pluginDir.getAbsolutePath());
+        env.put("RZ_PREFIX", prefix.getAbsolutePath());
+        env.put("RZ_MAGICPATH", new File(prefix, "share/rizin/magic").getAbsolutePath());
+        env.put("RZ_RDATAHOME", new File(getFilesDir(), "rizin-data").getAbsolutePath());
+        Process process = builder.start();
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        boolean truncated = false;
+        try (InputStream in = process.getInputStream()) {
+            byte[] buffer = new byte[32768];
+            int count;
+            while ((count = in.read(buffer)) != -1) {
+                if (bytes.size() + count <= 20 * 1024 * 1024) bytes.write(buffer, 0, count);
+                else truncated = true;
+            }
+        }
+        int exit = process.waitFor();
+        String result = new String(bytes.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+        if (truncated) result += "\\n\\n/* Output truncated at 20 MiB. */";
+        String lower = result.toLowerCase(Locale.ROOT);
+        if (exit != 0 || lower.contains("unknown command") || lower.contains("cannot load plugin"))
+            throw new IOException("Rizin/Ghidra falhou (exit " + exit + "):\\n" + result);
+        if (!lower.contains("void ") && !lower.contains("int ") &&
+                !lower.contains("undefined") && !lower.contains("ulong"))
+            throw new IOException("Nenhuma função foi descompilada. Verifique símbolos/arquitetura do ELF.\\n" + result);
+        return result;
     }
 
     private EditText field(String hint) {
