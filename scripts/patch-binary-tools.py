@@ -674,14 +674,14 @@ public final class BinaryWorkbenchActivity extends Activity {
         builder.redirectOutput(outputFile);
         java.util.Map<String, String> env = builder.environment();
         env.put("LD_LIBRARY_PATH", libraryDir.getAbsolutePath());
-        env.put("RZ_LIBR_PLUGINS", pluginDir.getAbsolutePath());
+        env.put("RZ_LIB_PLUGINS", pluginDir.getAbsolutePath());
         env.put("RZ_PREFIX", prefix.getAbsolutePath());
         env.put("RZ_MAGICPATH", new File(prefix, "share/rizin/magic").getAbsolutePath());
-        env.put("RZ_RDATAHOME", new File(getFilesDir(), "rizin-data").getAbsolutePath());
+        env.put("RZ_DATAHOME", new File(getFilesDir(), "rizin-data").getAbsolutePath());
         Process process = builder.start();
-        if (!process.waitFor(10, java.util.concurrent.TimeUnit.MINUTES)) {
+        if (!process.waitFor(15, java.util.concurrent.TimeUnit.MINUTES)) {
             process.destroyForcibly();
-            throw new IOException("A descompilação excedeu 10 minutos e foi encerrada com segurança.");
+            throw new IOException("A descompilação excedeu 15 minutos e foi encerrada com segurança.");
         }
         int exit = process.exitValue();
         if (exit != 0 || !outputFile.isFile() || outputFile.length() == 0) {
