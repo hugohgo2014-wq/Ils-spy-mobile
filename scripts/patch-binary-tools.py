@@ -570,15 +570,9 @@ public final class BinaryWorkbenchActivity extends Activity {
             deleteTree(prefix);
             if (!prefix.mkdirs()) throw new IllegalStateException("Não foi possível preparar o Rizin.");
             copyAssetTree("native-decompiler/" + selectedAbi, prefix);
-            if (!executable.setExecutable(true, true))
-                throw new IllegalStateException("Android não permitiu executar o binário Rizin.");
-            File libs = new File(prefix, "lib");
-            File[] libraryFiles = libs.listFiles();
-            if (libraryFiles != null) {
-                for (File library : libraryFiles) {
-                    if (library.isFile()) library.setReadable(true, true);
-                }
-            }
+            // The copied assets are data only. Android 10+ forbids execve()
+            // from writable app-private storage; the actual executable and
+            // shared libraries are loaded from ApplicationInfo.nativeLibraryDir.
             if (!marker.createNewFile()) throw new IllegalStateException("Não foi possível finalizar a instalação do Rizin.");
         }
         return prefix;
@@ -605,10 +599,12 @@ public final class BinaryWorkbenchActivity extends Activity {
     }
 
     private String runRizinGhidra(File prefix, File elf) throws Exception {
-        File executable = new File(prefix, "bin/rizin");
-        File libraryDir = new File(prefix, "lib");
-        File pluginDir = new File(prefix, "lib/rizin/plugins");
-        File sleighDir = new File(pluginDir, "rz_ghidra_sleigh");
+        // Native libraries are extracted by PackageManager into /data/app/.../lib.
+        // This location is executable on modern Android; code_cache/files are not.
+        File libraryDir = new File(getApplicationInfo().nativeLibraryDir);
+        File executable = new File(libraryDir, "libilspy_rizin.so");
+        File pluginDir = libraryDir;
+        File sleighDir = new File(prefix, "lib/rizin/plugins/rz_ghidra_sleigh");
         if (!executable.isFile() || !new File(pluginDir, "core_ghidra.so").isFile() ||
                 !new File(sleighDir, "AARCH64.sla").isFile())
             throw new IllegalStateException("Pacote Rizin/Ghidra incompleto no APK.");
