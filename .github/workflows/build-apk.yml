@@ -1,4 +1,5 @@
 name: Build ILSpy Mobile APK
+# CI run requested after synchronizing the Termux builder image with infra-improvs.
 
 on:
   push:
