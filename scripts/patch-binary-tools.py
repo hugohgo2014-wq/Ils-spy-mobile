@@ -496,10 +496,14 @@ public final class BinaryWorkbenchActivity extends Activity {
                 "\nSegment size: " + info.executableSize + " bytes" +
                 "\nShowing first " + amount + " bytes (maximum 64 KiB)." +
                 "\n\n" + disassembly;
-        output.setText(header);
+        // Make reconstructed C pseudocode the primary view. Assembly remains
+        // available as a secondary diagnostic, never as the default "decompile" result.
+        output.setText("Preparando descompilador Ghidra…\\nO pseudocódigo C será exibido aqui.");
         content.addView(output, new LinearLayout.LayoutParams(-1, -2));
+        content.addView(button("Ver Assembly (Capstone)", false, () -> output.setText(header)));
+        content.addView(button("Descompilar para pseudocódigo C/C++ (Ghidra)", true, this::decompileElfToC));
 
-        TextView note = label("Patch binário controlado · substitui bytes no segmento executável; não recompila C/C++ nem reconstrói o ELF.", 11, dim, false);
+        TextView note = label("O Ghidra reconstrói pseudocódigo C a partir das funções do binário. Não recupera o fonte original, comentários ou nomes removidos.", 11, dim, false);
         note.setPadding(0, dp(12), 0, dp(5));
         content.addView(note);
         patchOffset = field("Offset do arquivo (ex.: 0x" + Long.toHexString(info.executableOffset) + ")");
@@ -511,7 +515,8 @@ public final class BinaryWorkbenchActivity extends Activity {
         TextView decompilerNote = label("Descompilação nativa Ghidra · reconstrói pseudocódigo C; não recupera nomes, comentários ou o código-fonte original.", 11, dim, false);
         decompilerNote.setPadding(0, dp(12), 0, dp(5));
         content.addView(decompilerNote);
-        content.addView(button("Descompilar .so para código C (Ghidra)", true, this::decompileElfToC));
+        // Start native decompilation immediately after opening the .so.
+        decompileElfToC();
     }
 
     private void decompileElfToC() {
