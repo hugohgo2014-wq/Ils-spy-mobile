@@ -686,6 +686,9 @@ public final class BinaryWorkbenchActivity extends Activity {
 
     private void loadArscXml(File file) {
         try {
+            if (selectedSmali != null && editor != null && selectedSmali.isFile()) {
+                Files.write(selectedSmali.toPath(), editor.getText().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
             selectedSmali = file;
             editor.setText(new String(Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8));
             status.setText("XML de recursos: " + file.getName());
