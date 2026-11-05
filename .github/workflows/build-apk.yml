@@ -100,38 +100,48 @@ jobs:
           set -euo pipefail
           TERMUX_DIR="$RUNNER_TEMP/termux-packages"
           CONTAINER_NAME="ilspy-termux-bootstrap"
+          BUILDER_IMAGE="ghcr.io/termux/package-builder:latest"
 
           git clone --depth 1 --branch infra-improvs https://github.com/agnostic-apollo/termux-packages.git "$TERMUX_DIR"
           cd "$TERMUX_DIR"
 
-          # Set the application id before generating package paths and bootstrap metadata.
+          # Set the application id before generating bootstrap metadata.
           sed -i -E 's/^TERMUX_APP__PACKAGE_NAME=.*/TERMUX_APP__PACKAGE_NAME="com.ilspy.mobile"/' scripts/properties.sh
           grep -n '^TERMUX_APP__PACKAGE_NAME' scripts/properties.sh
 
-          # The Termux builder expects this exact in-repository NDK path.
-          mkdir -p "$TERMUX_DIR/build-tools"
-          cp -a "$ANDROID_NDK_HOME" "$TERMUX_DIR/build-tools/android-ndk-r28c"
-          test -f "$TERMUX_DIR/build-tools/android-ndk-r28c/AndroidVersion.txt"
-          echo "Verified NDK staging:"
-          ls -ld "$TERMUX_DIR/build-tools/android-ndk-r28c"
-          cat "$TERMUX_DIR/build-tools/android-ndk-r28c/AndroidVersion.txt"
-
-          # Run the builder as one foreground container instead of run-docker.sh's
-          # detached container + docker-exec lifecycle. The CI runner and the
-          # official builder both use uid 1001, so mounted files remain writable.
+          # Use the SDK/NDK installed in the official Termux builder image.
+          # This branch configures NDK r28c at ~/lib/android-ndk-r28c.
+          # Do not copy the host runner NDK into the repository: the builder
+          # resolves NDK from its own HOME unless TERMUX_PACKAGES_OFFLINE=true.
+          docker pull "$BUILDER_IMAGE"
           docker run --rm --init --name "$CONTAINER_NAME" \
             --volume "$TERMUX_DIR:/home/builder/termux-packages" \
             --security-opt "seccomp=$TERMUX_DIR/scripts/profile.json" \
             --env CI=true \
             --workdir /home/builder/termux-packages \
-            ghcr.io/termux/package-builder:latest \
+            "$BUILDER_IMAGE" \
             bash -lc '
               set -euo pipefail
               echo "Builder identity: $(id)"
+              echo "Builder home: $HOME"
               echo "Builder workdir: $PWD"
-              test -f build-tools/android-ndk-r28c/AndroidVersion.txt
-              test -x build-tools/android-ndk-r28c/toolchains/llvm/prebuilt/linux-x86_64/bin/clang
-              echo "NDK is visible and executable inside the Termux builder."
+
+              NDK="$HOME/lib/android-ndk-r28c"
+              if [ ! -d "$NDK" ]; then
+                echo "ERROR: Termux builder image does not contain expected NDK: $NDK" >&2
+                find "$HOME/lib" -maxdepth 2 -type f -name source.properties -print 2>/dev/null || true
+                exit 20
+              fi
+              if ! grep -q "Pkg.Revision = 28.2.13676358" "$NDK/source.properties"; then
+                echo "ERROR: Wrong NDK revision in $NDK/source.properties" >&2
+                cat "$NDK/source.properties" >&2
+                exit 21
+              fi
+              export NDK
+              echo "Verified Termux builder NDK:"
+              grep "Pkg.Revision" "$NDK/source.properties"
+              test -x "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+
               ./scripts/build-bootstraps.sh \
                 --architectures aarch64,x86_64 \
                 --no-build-unneeded-subpackages \
