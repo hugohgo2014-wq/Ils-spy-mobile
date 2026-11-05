@@ -109,11 +109,11 @@ jobs:
           sed -i -E 's/^TERMUX_APP__PACKAGE_NAME=.*/TERMUX_APP__PACKAGE_NAME="com.ilspy.mobile"/' scripts/properties.sh
           grep -n '^TERMUX_APP__PACKAGE_NAME' scripts/properties.sh
 
-          # Use the SDK/NDK installed in the official Termux builder image.
-          # This branch configures NDK r28c at ~/lib/android-ndk-r28c.
-          # Do not copy the host runner NDK into the repository: the builder
-          # resolves NDK from its own HOME unless TERMUX_PACKAGES_OFFLINE=true.
-          docker pull "$BUILDER_IMAGE"
+          # Build the builder image from the SAME pinned Termux branch.
+          # The published :latest image currently contains NDK r30, while
+          # infra-improvs pins NDK r28c and its matching checksum.
+          # Building from this checkout keeps the Docker image and source in sync.
+          docker build --pull -t "$BUILDER_IMAGE" -f "$TERMUX_DIR/scripts/Dockerfile" "$TERMUX_DIR/scripts"
           docker run --rm --init --name "$CONTAINER_NAME" \
             --volume "$TERMUX_DIR:/home/builder/termux-packages" \
             --security-opt "seccomp=$TERMUX_DIR/scripts/profile.json" \
