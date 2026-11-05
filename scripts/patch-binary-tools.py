@@ -194,9 +194,8 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import brut.androlib.ApkFile;
+import brut.androlib.ApkDecoder;
 import brut.androlib.Config;
-import brut.androlib.res.ResDecoder;
 import brut.androlib.smali.SmaliDecoder;
 import com.android.tools.smali.smali.Smali;
 import com.android.tools.smali.smali.SmaliOptions;
@@ -548,7 +547,7 @@ public final class BinaryWorkbenchActivity extends Activity {
         if (!workspace.mkdirs()) throw new IllegalStateException("Não foi possível criar a pasta Smali.");
         File container = wrapDex(dex);
         status.setText("Baksmali descompilando DEX…");
-        new SmaliDecoder(container.toPath(), true).decode("classes.dex", workspace.toPath());
+        new SmaliDecoder(container, true).decode("classes.dex", workspace);
         List<File> files = new ArrayList<>();
         try (java.util.stream.Stream<java.nio.file.Path> stream = Files.walk(workspace.toPath())) {
             stream.filter(p -> p.toString().endsWith(".smali")).forEach(p -> files.add(p.toFile()));
@@ -628,9 +627,10 @@ public final class BinaryWorkbenchActivity extends Activity {
         config.setJobs(1);
         config.setKeepBrokenResources(true);
         config.setIgnoreRawValues(true);
-        try (ApkFile apk = new ApkFile(zip.toPath())) {
-            new ResDecoder(apk, config).decodeResources(decoded.toPath());
-        }
+        // Apktool 3.0.3 exposes File-based ApkDecoder APIs. Decode the tiny
+        // container APK so the binary resources.arsc is processed with its
+        // expected APK context; no synthetic ApkFile/ResDecoder API is needed.
+        new ApkDecoder(zip, config).decode(decoded);
         List<File> xml = new ArrayList<>();
         try (java.util.stream.Stream<java.nio.file.Path> stream = Files.walk(decoded.toPath())) {
             stream.filter(p -> p.toString().endsWith(".xml")).forEach(p -> xml.add(p.toFile()));
