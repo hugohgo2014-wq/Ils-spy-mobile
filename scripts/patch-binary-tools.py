@@ -706,9 +706,11 @@ public final class BinaryWorkbenchActivity extends Activity {
         ProcessBuilder builder = new ProcessBuilder(
                 executable.getAbsolutePath(), "-q", "-A",
                 "-e", "scr.color=false",
-                "-e", "ghidra.sleighhome=" + sleighDir.getAbsolutePath(),
-                "-e", "ghidra.lang=" + language,
-                "-c", "pdg @@F; q",
+                // rz-ghidra registers its own config variables during plugin load.
+                // Passing ghidra.sleighhome/ghidra.lang with -e races that
+                // registration and produces "variable already exists"; use the
+                // documented SLEIGHHOME environment override instead.
+                "-c", "pdgs; pdg @@F; q",
                 elf.getAbsolutePath());
         builder.directory(prefix);
         builder.redirectErrorStream(true);
@@ -720,6 +722,7 @@ public final class BinaryWorkbenchActivity extends Activity {
         env.put("RZ_DATAHOME", new File(getFilesDir(), "rizin-data").getAbsolutePath());
         env.put("RZ_USER_HOME", homeDir.getAbsolutePath());
         env.put("RZ_CACHE_HOME", new File(getCacheDir(), "rizin-cache").getAbsolutePath());
+        env.put("SLEIGHHOME", sleighDir.getAbsolutePath());
         env.put("HOME", homeDir.getAbsolutePath());
         env.put("TMPDIR", tempDir.getAbsolutePath());
         env.put("TMP", tempDir.getAbsolutePath());
@@ -748,6 +751,10 @@ public final class BinaryWorkbenchActivity extends Activity {
         String lower = result.toLowerCase(Locale.ROOT);
         if (exit != 0 || lower.contains("unknown command") || lower.contains("cannot load plugin"))
             throw new IOException("Rizin/Ghidra falhou (exit " + exit + "):\\n" + result);
+        if (lower.contains("no sleigh specification") || lower.contains("no languages loaded") ||
+                !lower.contains("aarch64"))
+            throw new IOException("Ghidra não carregou a arquitetura " + language +
+                    ". SLEIGHHOME=" + sleighDir.getAbsolutePath() + "\\n" + result);
         if (!lower.contains("void ") && !lower.contains("int ") &&
                 !lower.contains("undefined") && !lower.contains("ulong"))
             throw new IOException("Nenhuma função foi descompilada. Verifique símbolos/arquitetura do ELF.\\n" + result);
