@@ -149,6 +149,39 @@ jobs:
           TERMUX_UNBOUND_FIX
           tail -n 12 "$UNBOUND_BUILD"
 
+          # Backport the upstream command-not-found fix for alternatives whose
+          # target is absent from the generated Contents index (e.g. xfce4-session).
+          CNF_BUILD="$TERMUX_DIR/packages/command-not-found/build.sh"
+          test -f "$CNF_BUILD"
+          cat >> "$CNF_BUILD" <<'TERMUX_CNF_FIX'
+          termux_step_pre_configure() {
+              local source_file="$TERMUX_PKG_SRCDIR/generate-db.js"
+              test -f "$source_file"
+              python3 - "$source_file" <<'PY'
+          import pathlib
+          import sys
+
+          source = pathlib.Path(sys.argv[1])
+          content = source.read_text()
+          old = """        if (packageName === undefined) {
+                  console.error(`Package name not found for path: ${path}`);
+                  process.exit(1);
+                  }"""
+          new = """        if (packageName === undefined) {
+                  console.warn(`WARNING: Package name not found for path: ${path}. Skipping...`);
+                  return;
+                  }"""
+          if content.count(old) != 1:
+              raise SystemExit("Unexpected command-not-found generate-db.js; refusing an unverified patch")
+          source.write_text(content.replace(old, new))
+          if "process.exit(1)" in source.read_text():
+              raise SystemExit("command-not-found fatal alternatives check remains")
+          print("Applied upstream-compatible command-not-found alternatives fix")
+          PY
+          }
+          TERMUX_CNF_FIX
+          tail -n 25 "$CNF_BUILD"
+
           # Build the builder image from the SAME pinned Termux branch.
           # The published :latest image currently contains NDK r30, while
           # infra-improvs pins NDK r28c and its matching checksum.
