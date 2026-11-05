@@ -454,11 +454,7 @@ public final class WorkbenchActivity extends Activity {
         toolbar.addView(actionButton("Abrir", true, this::chooseFile));
         toolbar.addView(actionButton("Copiar", false, this::copyCode));
         root.addView(toolbar);
-        Button rebuildEntry = actionButton("↻  RECOMPILAR / BUILD", true, () -> {
-            activeTab = TAB_CODE;
-            updateTabs();
-            renderCode();
-        });
+        Button rebuildEntry = actionButton("↻  RECOMPILAR DLL + SALVAR", true, this::recompileOrOpenEditor);
         LinearLayout.LayoutParams rebuildParams = new LinearLayout.LayoutParams(-1, dp(46));
         rebuildParams.topMargin = dp(5);
         root.addView(rebuildEntry, rebuildParams);
@@ -1038,7 +1034,7 @@ ui = ui.replace(
 )
 ui = ui.replace(
     "private EditText search;\n    private File currentFile;",
-    "private EditText search, sourceEditor;\n    private File currentFile, pendingExport;\n    private String pendingExportName = \"\";"
+    "private EditText search, sourceEditor;\n    private File currentFile, pendingExport;\n    private String pendingExportName = \"\";\n    private boolean buildRunning;"
 )
 ui = ui.replace(
     "drawable.setColor(fill);\n        drawable.setCornerRadius(dp(8));",
@@ -1120,13 +1116,21 @@ old_start = """super.onActivityResult(request, result, data);
         if (request != PICK_ASSEMBLY || result != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();"""
 new_start = """super.onActivityResult(request, result, data);
-        if (result != RESULT_OK || data == null || data.getData() == null) return;
-        Uri uri = data.getData();
         if (request == PICK_OUTPUT) {
-            if (pendingExport == null) return;
+            if (result != RESULT_OK || data == null || data.getData() == null) {
+                status.setText("Salvamento cancelado. Compile novamente para abrir o seletor de destino.");
+                pendingExport = null;
+                pendingExportName = "";
+                return;
+            }
+            if (pendingExport == null || !pendingExport.isFile() || pendingExport.length() == 0) {
+                status.setText("Não há arquivo compilado válido para exportar.");
+                return;
+            }
+            Uri outputUri = data.getData();
             try (InputStream input = new java.io.FileInputStream(pendingExport);
-                 java.io.OutputStream output = getContentResolver().openOutputStream(uri, "w")) {
-                if (output == null) throw new IllegalStateException("Não foi possível gravar o destino.");
+                 java.io.OutputStream output = getContentResolver().openOutputStream(outputUri, "w")) {
+                if (output == null) throw new IllegalStateException("O Android não abriu o destino de gravação.");
                 byte[] buffer = new byte[65536];
                 int count;
                 while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
@@ -1134,11 +1138,15 @@ new_start = """super.onActivityResult(request, result, data);
                 status.setText(pendingExportName.toLowerCase(Locale.ROOT).endsWith(".cs")
                         ? "Código C# salvo: " + pendingExportName
                         : "Arquivo recompilado salvo: " + pendingExportName);
+                pendingExport = null;
+                pendingExportName = "";
             } catch (Throwable error) {
-                status.setText("Falha ao exportar: " + error.getMessage());
+                status.setText("Falha ao exportar: " + error.getClass().getSimpleName() + ": " + error.getMessage());
             }
             return;
         }
+        if (result != RESULT_OK || data == null || data.getData() == null) return;
+        Uri uri = data.getData();
         if (request == PICK_REFERENCE) {
             importReference(uri);
             return;
@@ -1240,58 +1248,124 @@ helpers = r'''    private File compilerReferencesDirectory() throws Exception {
         }
     }
 
+    private void recompileOrOpenEditor() {
+        if (currentFile == null) {
+            status.setText("Primeiro abra uma DLL, EXE .NET ou WINMD.");
+            return;
+        }
+        if (activeTab != TAB_CODE || sourceEditor == null) {
+            activeTab = TAB_CODE;
+            updateTabs();
+            renderCode();
+        }
+        if (sourceEditor == null) {
+            status.setText("Não foi possível carregar o editor C#.");
+            return;
+        }
+        recompileSource("dll");
+    }
+
     private void recompileSource(String kind) {
+        if (buildRunning) {
+            status.setText("Uma compilação já está em andamento.");
+            return;
+        }
         if (currentFile == null || sourceEditor == null) {
             status.setText("Abra um assembly e entre na aba C# Code antes de recompilar.");
             return;
         }
-        String source = sourceEditor.getText().toString();
+        final String source = sourceEditor.getText().toString();
         if (source.trim().isEmpty()) {
             status.setText("O editor C# está vazio.");
             return;
         }
+
+        final String baseName;
+        final File outputFile;
         try {
+            String base = displayName.replaceFirst("(?i)\\\\.(dll|exe|winmd|netmodule|winmdobj)$", "");
+            if (base.isEmpty()) base = "RebuiltAssembly";
+            baseName = base;
+            String extension = kind.equals("winmdobj") ? ".winmdobj" : "." + kind;
             File work = new File(getCacheDir(), "ilspy-recompile");
             if (!work.exists() && !work.mkdirs())
                 throw new IllegalStateException("Não foi possível criar a pasta de compilação.");
-            File sourceFile = new File(work, "EditedAssembly.cs");
-            try (FileOutputStream output = new FileOutputStream(sourceFile)) {
-                output.write(source.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            }
-
-            String baseName = displayName.replaceFirst("(?i)\\.(dll|exe|winmd|netmodule|winmdobj)$", "");
-            if (baseName.isEmpty()) baseName = "RebuiltAssembly";
-            String extension = kind.equals("winmdobj") ? ".winmdobj" : "." + kind;
-            File outputFile = new File(work, baseName + "-rebuilt" + extension);
-            File frameworkRefs = compilerReferencesDirectory();
-            File customRefs = userReferencesDirectory();
-            String references = frameworkRefs.getAbsolutePath() + ";" + customRefs.getAbsolutePath();
-
-            status.setText("Roslyn compilando " + kind.toUpperCase(Locale.ROOT) + "…");
-            String result = NativeBridge.nativeRecompile(
-                    sourceFile.getAbsolutePath(), outputFile.getAbsolutePath(),
-                    references, kind, baseName);
-            if (result == null || !result.startsWith("COMPILE_OK")) {
-                status.setText("Falha na recompilação");
-                showBuildDiagnostics(result == null ? "O compilador não retornou resultado." : result);
-                return;
-            }
-            if (!outputFile.exists() || outputFile.length() == 0) {
-                status.setText("O compilador não gerou o arquivo de saída.");
-                showBuildDiagnostics(result);
-                return;
-            }
-            pendingExport = outputFile;
-            pendingExportName = outputFile.getName();
-            status.setText("Compilação concluída · " + outputFile.length() + " bytes");
-            Intent create = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-            create.addCategory(Intent.CATEGORY_OPENABLE);
-            create.setType("application/octet-stream");
-            create.putExtra(Intent.EXTRA_TITLE, outputFile.getName());
-            startActivityForResult(create, PICK_OUTPUT);
+            outputFile = new File(work, baseName + "-rebuilt-" +
+                    System.currentTimeMillis() + extension);
         } catch (Throwable error) {
-            status.setText("Falha no recompilador: " + error.getMessage());
+            status.setText("Falha ao preparar compilação: " + error.getMessage());
+            return;
         }
+
+        buildRunning = true;
+        status.setText("Roslyn compilando " + kind.toUpperCase(Locale.ROOT) + " em segundo plano…");
+        Thread worker = new Thread(() -> {
+            try {
+                File sourceFile = new File(outputFile.getParentFile(),
+                        "EditedAssembly-" + System.currentTimeMillis() + ".cs");
+                try (FileOutputStream stream = new FileOutputStream(sourceFile, false)) {
+                    stream.write(source.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    stream.flush();
+                    stream.getFD().sync();
+                }
+
+                File frameworkRefs = compilerReferencesDirectory();
+                File customRefs = userReferencesDirectory();
+                String references = frameworkRefs.getAbsolutePath() + ";" +
+                        customRefs.getAbsolutePath();
+                String result = NativeBridge.nativeRecompile(
+                        sourceFile.getAbsolutePath(), outputFile.getAbsolutePath(),
+                        references, kind, baseName);
+
+                if (result == null || !result.startsWith("COMPILE_OK")) {
+                    final String diagnostic = result == null
+                            ? "O compilador não retornou resultado." : result;
+                    runOnUiThread(() -> {
+                        buildRunning = false;
+                        status.setText("Falha na recompilação · consulte Build Output");
+                        showBuildDiagnostics(diagnostic);
+                    });
+                    return;
+                }
+                if (!outputFile.isFile() || outputFile.length() == 0) {
+                    runOnUiThread(() -> {
+                        buildRunning = false;
+                        status.setText("O compilador informou sucesso, mas não criou o arquivo.");
+                        showBuildDiagnostics(result);
+                    });
+                    return;
+                }
+
+                runOnUiThread(() -> {
+                    buildRunning = false;
+                    if (isFinishing() || isDestroyed()) return;
+                    pendingExport = outputFile;
+                    pendingExportName = outputFile.getName();
+                    status.setText("Compilação concluída · " + outputFile.length() +
+                            " bytes · abrindo seletor para salvar…");
+                    try {
+                        Intent create = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                        create.addCategory(Intent.CATEGORY_OPENABLE);
+                        create.setType("application/octet-stream");
+                        create.putExtra(Intent.EXTRA_TITLE, outputFile.getName());
+                        startActivityForResult(create, PICK_OUTPUT);
+                    } catch (Throwable error) {
+                        status.setText("Compilado, mas o seletor não abriu: " + error.getMessage());
+                        showBuildDiagnostics("O arquivo continua no cache privado do app:\\n" +
+                                outputFile.getAbsolutePath() + "\\n\\n" + error);
+                    }
+                });
+            } catch (Throwable error) {
+                runOnUiThread(() -> {
+                    buildRunning = false;
+                    status.setText("Falha no recompilador: " + error.getClass().getSimpleName() +
+                            ": " + error.getMessage());
+                    showBuildDiagnostics(status.getText().toString());
+                });
+            }
+        }, "ilspy-recompiler");
+        worker.setPriority(Thread.NORM_PRIORITY);
+        worker.start();
     }
 
     private void showBuildDiagnostics(String message) {
