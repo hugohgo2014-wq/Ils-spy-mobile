@@ -438,9 +438,9 @@ public final class BootstrapActivity extends Activity {
 
 # Add a terminal entry point to the existing workbench toolbar.
 text = workbench.read_text(encoding="utf-8")
-anchor = 'toolbar.addView(actionButton("Abrir", true, this::chooseFile));'
+anchor = "root.addView(toolbar);"
 if anchor not in text:
-    raise SystemExit("Could not find Workbench toolbar insertion point.")
+    raise SystemExit("Could not find finalized Workbench toolbar container.")
 if 'TerminalActivity.class' not in text:
     text = text.replace(anchor, anchor + '\n        toolbar.addView(actionButton("Terminal", false, () -> startActivity(new android.content.Intent(this, TerminalActivity.class))));', 1)
 workbench.write_text(text, encoding="utf-8")
