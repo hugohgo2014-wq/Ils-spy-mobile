@@ -808,6 +808,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Emit;
 
 namespace ILSpy.Mobile.Engine;
 
