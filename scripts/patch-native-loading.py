@@ -1362,14 +1362,9 @@ helpers = r'''    private File compilerReferencesDirectory() throws Exception {
                     stream.getFD().sync();
                 }
 
-                File frameworkRefs = compilerReferencesDirectory();
-                File customRefs = userReferencesDirectory();
-                String references = frameworkRefs.getAbsolutePath() + ";" +
-                        customRefs.getAbsolutePath();
                 Bundle job = new Bundle();
                 job.putString("sourcePath", sourceFile.getAbsolutePath());
                 job.putString("outputPath", outputFile.getAbsolutePath());
-                job.putString("references", references);
                 job.putString("kind", kind);
                 job.putString("assemblyName", baseName);
                 runOnUiThread(() -> {
@@ -1390,12 +1385,6 @@ helpers = r'''    private File compilerReferencesDirectory() throws Exception {
                     }
                 });
                 return;
-            } catch (Throwable error) {
-                        status.setText("Compilado, mas o seletor não abriu: " + error.getMessage());
-                        showBuildDiagnostics("O arquivo continua no cache privado do app:\\n" +
-                                outputFile.getAbsolutePath() + "\\n\\n" + error);
-                    }
-                });
             } catch (Throwable error) {
                 runOnUiThread(() -> {
                     buildRunning = false;
@@ -1433,6 +1422,7 @@ workbench.write_text(ui, encoding="utf-8")
 compiler_service = root / "app/src/main/java/com/ilspy/mobile/CompilerService.java"
 compiler_service.write_text(r'''package com.ilspy.mobile;
 
+import android.app.Activity;
 import android.app.IntentService;
 import android.content.Intent;
 import android.os.Bundle;
@@ -1477,7 +1467,10 @@ public final class CompilerService extends IntentService {
             response.putString("outputPath", outputPath);
             File output = outputPath.isEmpty() ? null : new File(outputPath);
             response.putLong("outputLength", output != null && output.isFile() ? output.length() : 0L);
-            receiver.send(0, response);
+            File built = outputPath.isEmpty() ? null : new File(outputPath);
+            boolean success = result.startsWith("COMPILE_OK") &&
+                    built != null && built.isFile() && built.length() > 0;
+            receiver.send(success ? Activity.RESULT_OK : Activity.RESULT_CANCELED, response);
         }
     }
 
@@ -1510,7 +1503,7 @@ xml = manifest.read_text(encoding="utf-8")
 if "CompilerService" not in xml:
     xml = xml.replace(
         "</application>",
-        '        <service android:name=".CompilerService" android:exported="false" android:process=":compiler" />\\n    </application>'
+        '        <service android:name=".CompilerService" android:exported="false" android:process=":compiler" />\n    </application>'
     )
 manifest.write_text(xml, encoding="utf-8")
 
