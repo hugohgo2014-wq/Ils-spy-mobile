@@ -118,6 +118,24 @@ jobs:
           sed -i 's/^TERMUX_PKG_SHA256=02072b8f0aaf26907b6b02293c875539ce52fc59079344e7cf811ab03394cfa3$/TERMUX_PKG_SHA256=b3fa774983abb5f95aecca4557d146091d8666bc65fb310d4d3e38327357ade9/' "$FOOT_BUILD"
           grep '^TERMUX_PKG_SHA256=' "$FOOT_BUILD"
 
+          # Backport the official Unbound fix for SWIG 4.4's removal of
+          # the deprecated $function macro. The upstream commit replaces it
+          # with $action in libunbound/python/libunbound.i.
+          UNBOUND_BUILD="$TERMUX_DIR/packages/libunbound/build.sh"
+          test -f "$UNBOUND_BUILD"
+          cat >> "$UNBOUND_BUILD" <<'TERMUX_UNBOUND_FIX'
+termux_step_pre_configure() {
+    local interface_file="$TERMUX_PKG_SRCDIR/libunbound/python/libunbound.i"
+    test -f "$interface_file"
+    sed -i 's/\$function/\$action/g' "$interface_file"
+    if grep -Fq '\$function' "$interface_file"; then
+        echo "Unbound SWIG compatibility patch did not apply" >&2
+        return 1
+    fi
+}
+TERMUX_UNBOUND_FIX
+          tail -n 12 "$UNBOUND_BUILD"
+
           # Build the builder image from the SAME pinned Termux branch.
           # The published :latest image currently contains NDK r30, while
           # infra-improvs pins NDK r28c and its matching checksum.
