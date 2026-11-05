@@ -58,6 +58,7 @@ jobs:
           grep -n '^TERMUX_APP__PACKAGE_NAME' scripts/properties.sh
           sed -i -E 's/^TERMUX_APP__PACKAGE_NAME=.*/TERMUX_APP__PACKAGE_NAME="com.ilspy.mobile"/' scripts/properties.sh
           grep -n '^TERMUX_APP__PACKAGE_NAME' scripts/properties.sh
+          ./scripts/run-docker.sh ./clean.sh
           ./scripts/run-docker.sh ./scripts/build-bootstraps.sh --architectures aarch64,x86_64 --no-build-unneeded-subpackages --packages-post-additional clang,cmake,ninja,git,python,make,pkg-config,binutils
           mkdir -p "$RUNNER_TEMP/ilspy-mobile/app/src/main/assets/termux"
           for arch in aarch64 x86_64; do
