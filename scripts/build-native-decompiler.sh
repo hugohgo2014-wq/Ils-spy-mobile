@@ -108,6 +108,9 @@ EOF
     -DCMAKE_PREFIX_PATH="$prefix" \
     -DRizin_DIR="$prefix/lib/cmake/Rizin" \
     -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
+    -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
+    -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
+    -DANDROID_STL=c++_shared \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
     -DRIZIN_INSTALL_PLUGDIR="$prefix/lib/rizin/plugins" \
     -DBUILD_SLASPECS=OFF \
@@ -130,6 +133,9 @@ EOF
     exit 1
   fi
   cp "$prefix/bin/rizin" "$asset/bin/rizin"
+  # The command-line executable and the Ghidra plugin use the NDK shared C++ runtime.
+  local cxx_shared="$NDK/sysroot/usr/lib/$triple/libc++_shared.so"
+  if [[ -f "$cxx_shared" ]]; then cp "$cxx_shared" "$asset/lib/libc++_shared.so"; fi
   # Dereference versioned .so symlinks: Android assets cannot recreate symlinks.
   find "$prefix/lib" -maxdepth 1 -type f -o -type l | while read -r library; do
     case "$library" in
