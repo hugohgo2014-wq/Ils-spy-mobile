@@ -59,13 +59,17 @@ build_one_abi() {
   mkdir -p "$prefix"
   cat > "$cross" <<EOF
 [binaries]
-c = '$toolbin/${triple}33-clang'
-cpp = '$toolbin/${triple}33-clang++'
+c = '$toolbin/${triple}26-clang'
+cpp = '$toolbin/${triple}26-clang++'
 ar = '$toolbin/llvm-ar'
 as = '$toolbin/$triple-as'
 ranlib = '$toolbin/$triple-ranlib'
 strip = '$toolbin/$triple-strip'
 pkgconfig = 'false'
+
+[built-in options]
+c_link_args = ['-lm']
+cpp_link_args = ['-lm']
 
 [properties]
 sys_root = '$NDK/sysroot'
@@ -98,7 +102,8 @@ EOF
   cmake -S "$GHIDRA_SRC" -B "$plugin_build" \
     -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
     -DANDROID_ABI="$abi" \
-    -DANDROID_PLATFORM=android-33 \
+    -DANDROID_PLATFORM=android-26 \
+    -DCMAKE_SHARED_LINKER_FLAGS=-lm \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH="$prefix" \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
