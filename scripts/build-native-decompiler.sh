@@ -150,6 +150,22 @@ EOF
     cp -aL "$prefix/share/rizin" "$asset/share/"
   fi
   chmod 755 "$asset/bin/rizin"
+
+  # Android 10+ blocks execve() from writable app-private directories (W^X).
+  # Package the PIE executable and shared libraries in jniLibs; PackageManager
+  # extracts them into nativeLibraryDir under /data/app.
+  local jni="$ROOT/app/src/main/jniLibs/$abi"
+  mkdir -p "$jni"
+  cp "$prefix/bin/rizin" "$jni/libilspy_rizin.so"
+  find "$prefix/lib" -maxdepth 1 -type f -o -type l | while read -r library; do
+    case "$library" in
+      *.so|*.so.*) cp -L "$library" "$jni/$(basename "$library")" ;;
+    esac
+  done
+  find "$prefix/lib/rizin/plugins" -type f -name "*.so" -print0 | while IFS= read -r -d "" plugin; do
+    cp "$plugin" "$jni/lib$(basename "$plugin" .so).so"
+  done
+
   test -s "$asset/lib/rizin/plugins/core_ghidra.so"
   test -s "$asset/lib/rizin/plugins/rz_ghidra_sleigh/AARCH64.sla"
   echo "Bundled Rizin + Ghidra for $abi: $(du -sh "$asset" | cut -f1)"
