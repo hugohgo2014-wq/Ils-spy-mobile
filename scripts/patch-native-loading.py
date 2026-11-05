@@ -606,6 +606,7 @@ public final class WorkbenchActivity extends Activity {
                 status.setText(result == null ? "O motor não retornou código." : result);
                 return;
             }
+            sourceEditor = null; // The newly selected type must start from its own decompiled text.
             decompiled = result;
             activeTab = TAB_CODE;
             updateTabs();
