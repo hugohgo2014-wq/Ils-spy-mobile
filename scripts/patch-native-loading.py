@@ -779,4 +779,475 @@ else:
     raise SystemExit("Could not locate launcher MainActivity in AndroidManifest.xml")
 manifest.write_text(xml, encoding="utf-8")
 
+
+
+# ---------------------------------------------------------------------------
+# On-device Roslyn recompilation. This is a separate feature; the existing
+# ICSharpCode.Decompiler entry points are not replaced or modified.
+# ---------------------------------------------------------------------------
+engine_project = root / "native/ILSpyEngine/ILSpyEngine.csproj"
+project_text = engine_project.read_text(encoding="utf-8")
+if "Microsoft.CodeAnalysis.CSharp" not in project_text:
+    package_block = """
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <TrimmerRootAssembly Include="Microsoft.CodeAnalysis" />
+    <TrimmerRootAssembly Include="Microsoft.CodeAnalysis.CSharp" />
+  </ItemGroup>
+"""
+    project_text = project_text.replace("</Project>", package_block + "\n</Project>")
+engine_project.write_text(project_text, encoding="utf-8")
+
+compiler = root / "native/ILSpyEngine/RecompilerExports.cs"
+compiler.write_text(r'''using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+
+namespace ILSpy.Mobile.Engine;
+
+public static class RecompilerExports
+{
+    private static IntPtr Utf8(string value) => Marshal.StringToCoTaskMemUTF8(value);
+
+    [UnmanagedCallersOnly(EntryPoint = "ilspy_recompile_csharp")]
+    public static IntPtr Recompile(
+        IntPtr sourcePathPtr,
+        IntPtr outputPathPtr,
+        IntPtr referenceDirectoriesPtr,
+        IntPtr outputKindPtr,
+        IntPtr assemblyNamePtr)
+    {
+        try
+        {
+            string sourcePath = Marshal.PtrToStringUTF8(sourcePathPtr) ?? "";
+            string outputPath = Marshal.PtrToStringUTF8(outputPathPtr) ?? "";
+            string referenceDirectories = Marshal.PtrToStringUTF8(referenceDirectoriesPtr) ?? "";
+            string outputKindText = Marshal.PtrToStringUTF8(outputKindPtr) ?? "dll";
+            string assemblyName = Marshal.PtrToStringUTF8(assemblyNamePtr) ?? "RebuiltAssembly";
+
+            if (!File.Exists(sourcePath))
+                return Utf8("COMPILE_ERROR: O arquivo C# não existe.");
+            if (string.IsNullOrWhiteSpace(outputPath))
+                return Utf8("COMPILE_ERROR: Caminho de saída vazio.");
+
+            OutputKind outputKind = outputKindText.ToLowerInvariant() switch
+            {
+                "exe" => OutputKind.ConsoleApplication,
+                "winexe" => OutputKind.WindowsApplication,
+                "winmdobj" => OutputKind.WindowsRuntimeMetadata,
+                _ => OutputKind.DynamicallyLinkedLibrary
+            };
+
+            var references = new List<MetadataReference>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string directory in referenceDirectories.Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (!Directory.Exists(directory))
+                    continue;
+                foreach (string file in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
+                {
+                    string extension = Path.GetExtension(file);
+                    if (!extension.Equals(".dll", StringComparison.OrdinalIgnoreCase) &&
+                        !extension.Equals(".winmd", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    string fullPath = Path.GetFullPath(file);
+                    if (seen.Add(fullPath))
+                        references.Add(MetadataReference.CreateFromFile(fullPath));
+                }
+            }
+
+            if (references.Count == 0)
+                return Utf8("COMPILE_ERROR: Referências do .NET não foram encontradas no APK.");
+
+            var parseOptions = new CSharpParseOptions(LanguageVersion.Preview);
+            var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(sourcePath), parseOptions, sourcePath);
+
+            var options = new CSharpCompilationOptions(
+                outputKind,
+                optimizationLevel: OptimizationLevel.Release,
+                allowUnsafe: true,
+                deterministic: true,
+                nullableContextOptions: NullableContextOptions.Enable);
+
+            string safeName = new string(assemblyName
+                .Select(ch => char.IsLetterOrDigit(ch) || ch == '_' ? ch : '_')
+                .ToArray());
+            if (string.IsNullOrWhiteSpace(safeName))
+                safeName = "RebuiltAssembly";
+
+            var compilation = CSharpCompilation.Create(
+                safeName, new[] { tree }, references, options);
+
+            string? outputDirectory = Path.GetDirectoryName(outputPath);
+            if (!string.IsNullOrEmpty(outputDirectory))
+                Directory.CreateDirectory(outputDirectory);
+
+            EmitResult emitResult;
+            using (var output = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                emitResult = compilation.Emit(output);
+
+            if (!emitResult.Success)
+            {
+                try { if (File.Exists(outputPath)) File.Delete(outputPath); } catch { }
+                var diagnostics = emitResult.Diagnostics
+                    .Where(d => d.Severity == DiagnosticSeverity.Error || d.IsWarningAsError)
+                    .Take(80)
+                    .Select(d =>
+                    {
+                        var line = d.Location.GetLineSpan().StartLinePosition;
+                        return $"{d.Id} ({line.Line + 1},{line.Character + 1}): {d.GetMessage()}";
+                    });
+                return Utf8("COMPILE_ERROR\n" + string.Join("\n", diagnostics));
+            }
+
+            long bytes = new FileInfo(outputPath).Length;
+            return Utf8($"COMPILE_OK\n{outputPath}\n{bytes} bytes\nNovo assembly gerado. Assinatura, recursos e identidade binária original não são preservados automaticamente.");
+        }
+        catch (Exception error)
+        {
+            return Utf8("COMPILE_ERROR: " + error.GetType().Name + ": " + error.Message);
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "ilspy_recompiler_free_string")]
+    public static void FreeString(IntPtr value)
+    {
+        if (value != IntPtr.Zero)
+            Marshal.FreeCoTaskMem(value);
+    }
+}
+''', encoding="utf-8")
+
+# Bundle .NET reference assemblies as compile-time metadata for Roslyn.
+engine_builder = root / "scripts/build-engine.sh"
+builder_text = engine_builder.read_text(encoding="utf-8")
+if "ILSPY_COMPILER_REFERENCE_ASSETS" not in builder_text:
+    builder_text += r'''
+
+# Bundle the .NET 10 reference pack for offline on-device C# compilation.
+ILSPY_COMPILER_REFERENCE_ASSETS="$ROOT/app/src/main/assets/compiler-refs"
+mkdir -p "$ILSPY_COMPILER_REFERENCE_ASSETS"
+DOTNET_ROOT_VALUE="$(printenv DOTNET_ROOT || printf '/usr/share/dotnet')"
+DOTNET_PACK_ROOT="$DOTNET_ROOT_VALUE/packs/Microsoft.NETCore.App.Ref"
+ILSPY_REF_DIR="$(find "$DOTNET_PACK_ROOT" -type d -path '*/ref/net10.0' | sort -V | tail -n 1)"
+if [ -z "$ILSPY_REF_DIR" ] || [ ! -d "$ILSPY_REF_DIR" ]; then
+  echo "Could not find the .NET 10 reference assembly pack at $DOTNET_PACK_ROOT" >&2
+  exit 1
+fi
+cp "$ILSPY_REF_DIR"/*.dll "$ILSPY_COMPILER_REFERENCE_ASSETS"/
+echo "Bundled $(find "$ILSPY_COMPILER_REFERENCE_ASSETS" -maxdepth 1 -name '*.dll' | wc -l) .NET compiler references."
+'''
+engine_builder.write_text(builder_text, encoding="utf-8")
+
+# Add native function pointers for Roslyn compilation and its separately freed result.
+cpp = root / "app/src/main/cpp/native-lib.cpp"
+cpp_source = cpp.read_text(encoding="utf-8")
+cpp_source = cpp_source.replace(
+    'void (*freeString)(char*) = nullptr;\n    std::string error',
+    'void (*freeString)(char*) = nullptr;\n    char* (*recompile)(const char*, const char*, const char*, const char*, const char*) = nullptr;\n    void (*freeRecompilerString)(char*) = nullptr;\n    std::string error'
+)
+cpp_source = cpp_source.replace(
+    'bindEngineSymbol(g_engine.freeString, "ilspy_engine_free_string");',
+    'bindEngineSymbol(g_engine.freeString, "ilspy_engine_free_string") &&\n        bindEngineSymbol(g_engine.recompile, "ilspy_recompile_csharp") &&\n        bindEngineSymbol(g_engine.freeRecompilerString, "ilspy_recompiler_free_string");'
+)
+cpp_source = cpp_source.replace(
+    'g_engine.freeString = nullptr;\n        const std::string message',
+    'g_engine.freeString = nullptr;\n        g_engine.recompile = nullptr;\n        g_engine.freeRecompilerString = nullptr;\n        const std::string message'
+)
+if "char* (*recompile)(" not in cpp_source or 'bindEngineSymbol(g_engine.recompile' not in cpp_source:
+    raise SystemExit("Could not add compiler exports to the native engine API")
+if "Java_com_ilspy_mobile_NativeBridge_nativeRecompile" not in cpp_source:
+    cpp_source += r'''
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_ilspy_mobile_NativeBridge_nativeRecompile(
+        JNIEnv* env, jclass,
+        jstring sourcePath, jstring outputPath, jstring referenceDirectories,
+        jstring outputKind, jstring assemblyName) {
+    if (!g_engine.loaded)
+        return env->NewStringUTF("COMPILE_ERROR: ILSpy engine not initialized.");
+    const std::string source = javaStringToUtf8(env, sourcePath);
+    const std::string output = javaStringToUtf8(env, outputPath);
+    const std::string references = javaStringToUtf8(env, referenceDirectories);
+    const std::string kind = javaStringToUtf8(env, outputKind);
+    const std::string name = javaStringToUtf8(env, assemblyName);
+    char* raw = g_engine.recompile(source.c_str(), output.c_str(), references.c_str(),
+                                   kind.c_str(), name.c_str());
+    if (raw == nullptr)
+        return env->NewStringUTF("COMPILE_ERROR: Native compiler returned an empty result.");
+    std::string message(raw);
+    g_engine.freeRecompilerString(raw);
+    return env->NewStringUTF(message.c_str());
+}
+'''
+cpp.write_text(cpp_source, encoding="utf-8")
+
+bridge = root / "app/src/main/java/com/ilspy/mobile/NativeBridge.java"
+bridge_source = bridge.read_text(encoding="utf-8")
+if "nativeRecompile(" not in bridge_source:
+    bridge_source = bridge_source.replace(
+        "static native String nativeDecompileType(String absolutePath, String fullTypeName);",
+        "static native String nativeDecompileType(String absolutePath, String fullTypeName);\n" +
+        "    static native String nativeRecompile(String sourcePath, String outputPath, String referenceDirectories, String outputKind, String assemblyName);"
+    )
+bridge.write_text(bridge_source, encoding="utf-8")
+
+# Upgrade the workbench: editable C#, target selection, dependency import and
+# Android's Save As document picker for the rebuilt output.
+workbench = root / "app/src/main/java/com/ilspy/mobile/WorkbenchActivity.java"
+ui = workbench.read_text(encoding="utf-8")
+ui = ui.replace(
+    "private static final int PICK_ASSEMBLY = 4102;",
+    "private static final int PICK_ASSEMBLY = 4102;\n    private static final int PICK_OUTPUT = 4103;\n    private static final int PICK_REFERENCE = 4104;"
+)
+ui = ui.replace(
+    "private EditText search;\n    private File currentFile;",
+    "private EditText search, sourceEditor;\n    private File currentFile, pendingExport;\n    private String pendingExportName = \"\";"
+)
+ui = ui.replace(
+    "drawable.setColor(fill);\n        drawable.setCornerRadius(dp(8));",
+    """int top = Color.rgb(Math.min(255, Color.red(fill) + 13),
+                Math.min(255, Color.green(fill) + 13), Math.min(255, Color.blue(fill) + 13));
+        int bottom = Color.rgb(Math.max(0, Color.red(fill) - 15),
+                Math.max(0, Color.green(fill) - 15), Math.max(0, Color.blue(fill) - 15));
+        drawable.setColors(new int[] { top, fill, bottom });
+        drawable.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
+        drawable.setCornerRadius(dp(8));"""
+)
+ui = ui.replace(
+    "button.setBackground(rounded(primary ? accent : chrome2, primary ? 0 : border));\n        button.setOnClickListener",
+    "button.setBackground(rounded(primary ? accent : chrome2, primary ? Color.rgb(116, 190, 232) : border));\n        button.setElevation(dp(3));\n        button.setOnClickListener"
+)
+ui = ui.replace(
+    'toolbar.addView(actionButton("Abrir", true, this::chooseFile));\n        toolbar.addView(actionButton("Copiar", false, this::copyCode));',
+    'toolbar.addView(actionButton("▣ Abrir", true, this::chooseFile));\n        toolbar.addView(actionButton("⚒ Build", false, () -> { activeTab = TAB_CODE; updateTabs(); renderCode(); }));\n        toolbar.addView(actionButton("＋ Ref", false, this::chooseReference));'
+)
+
+old_render = """TextView editor = new TextView(this);
+        editor.setText(highlightCSharp(decompiled));
+        editor.setTextSize(12);
+        editor.setTypeface(Typeface.MONOSPACE);
+        editor.setTextIsSelectable(true);
+        editor.setTextColor(editorFg);
+        editor.setGravity(Gravity.TOP | Gravity.START);
+        editor.setPadding(dp(12), dp(12), dp(12), dp(12));
+        editor.setBackgroundColor(editorBg);
+        editor.setHorizontallyScrolling(true);
+        body.addView(editor, new LinearLayout.LayoutParams(-1, -2));"""
+new_render = """LinearLayout buildBar = new LinearLayout(this);
+        buildBar.setOrientation(LinearLayout.HORIZONTAL);
+        buildBar.addView(actionButton("DLL", true, () -> recompileSource("dll")),
+                new LinearLayout.LayoutParams(0, dp(44), 1));
+        buildBar.addView(actionButton("EXE", false, () -> recompileSource("exe")),
+                new LinearLayout.LayoutParams(0, dp(44), 1));
+        buildBar.addView(actionButton("WINMDOBJ*", false, () -> recompileSource("winmdobj")),
+                new LinearLayout.LayoutParams(0, dp(44), 1));
+        body.addView(buildBar);
+        TextView editHint = text("Editor C# · altere o código e escolha o formato para recompilar",
+                10, muted, false);
+        editHint.setPadding(dp(4), dp(7), dp(4), dp(5));
+        body.addView(editHint);
+        sourceEditor = new EditText(this);
+        sourceEditor.setText(highlightCSharp(decompiled));
+        sourceEditor.setTextSize(12);
+        sourceEditor.setTypeface(Typeface.MONOSPACE);
+        sourceEditor.setTextColor(editorFg);
+        sourceEditor.setHintTextColor(Color.rgb(125, 130, 135));
+        sourceEditor.setGravity(Gravity.TOP | Gravity.START);
+        sourceEditor.setPadding(dp(12), dp(12), dp(12), dp(12));
+        sourceEditor.setBackground(rounded(editorBg, Color.rgb(199, 195, 177)));
+        sourceEditor.setMinHeight(dp(440));
+        sourceEditor.setHorizontallyScrolling(true);
+        sourceEditor.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
+                android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE |
+                android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        sourceEditor.setSingleLine(false);
+        sourceEditor.setTextIsSelectable(true);
+        sourceEditor.setElevation(dp(2));
+        body.addView(sourceEditor, new LinearLayout.LayoutParams(-1, -2));
+        TextView refHint = text("Dependências adicionais: use ＋ Ref na barra superior. " +
+                "A saída é um assembly novo; recursos, strong-name e identidade original não são preservados automaticamente.",
+                10, muted, false);
+        refHint.setPadding(dp(4), dp(8), dp(4), dp(8));
+        body.addView(refHint);"""
+if old_render not in ui:
+    raise SystemExit("Could not locate the old read-only code viewer")
+ui = ui.replace(old_render, new_render)
+
+ui = ui.replace(
+    'if (!(lower.endsWith(".dll") || lower.endsWith(".exe") || lower.endsWith(".winmd"))) {',
+    'if (!(lower.endsWith(".dll") || lower.endsWith(".exe") || lower.endsWith(".winmd") || lower.endsWith(".netmodule") || lower.endsWith(".winmdobj"))) {'
+)
+
+old_start = """super.onActivityResult(request, result, data);
+        if (request != PICK_ASSEMBLY || result != RESULT_OK || data == null || data.getData() == null) return;
+        Uri uri = data.getData();"""
+new_start = """super.onActivityResult(request, result, data);
+        if (result != RESULT_OK || data == null || data.getData() == null) return;
+        Uri uri = data.getData();
+        if (request == PICK_OUTPUT) {
+            if (pendingExport == null) return;
+            try (InputStream input = new java.io.FileInputStream(pendingExport);
+                 java.io.OutputStream output = getContentResolver().openOutputStream(uri, "w")) {
+                if (output == null) throw new IllegalStateException("Não foi possível gravar o destino.");
+                byte[] buffer = new byte[65536];
+                int count;
+                while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                output.flush();
+                status.setText("Arquivo recompilado salvo: " + pendingExportName);
+            } catch (Throwable error) {
+                status.setText("Falha ao exportar: " + error.getMessage());
+            }
+            return;
+        }
+        if (request == PICK_REFERENCE) {
+            importReference(uri);
+            return;
+        }
+        if (request != PICK_ASSEMBLY) return;"""
+if old_start not in ui:
+    raise SystemExit("Could not locate onActivityResult start")
+ui = ui.replace(old_start, new_start)
+
+helper_marker = "    private void chooseFile() {"
+helpers = r'''    private File compilerReferencesDirectory() throws Exception {
+        File directory = new File(getFilesDir(), "ilspy-compiler-refs");
+        if (!directory.exists() && !directory.mkdirs())
+            throw new IllegalStateException("Não foi possível criar a pasta de referências.");
+        String[] assets = getAssets().list("compiler-refs");
+        if (assets == null || assets.length == 0)
+            throw new IllegalStateException("O APK não contém as referências do .NET para recompilar.");
+        File sample = new File(directory, assets[0]);
+        if (!sample.exists()) {
+            for (String name : assets) {
+                if (!name.endsWith(".dll")) continue;
+                try (InputStream input = getAssets().open("compiler-refs/" + name);
+                     FileOutputStream output = new FileOutputStream(new File(directory, name))) {
+                    byte[] buffer = new byte[65536];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                }
+            }
+        }
+        return directory;
+    }
+
+    private File userReferencesDirectory() throws Exception {
+        File directory = new File(getFilesDir(), "ilspy-user-refs");
+        if (!directory.exists() && !directory.mkdirs())
+            throw new IllegalStateException("Não foi possível criar a pasta de dependências.");
+        return directory;
+    }
+
+    private void chooseReference() {
+        Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        picker.setType("*/*");
+        picker.addCategory(Intent.CATEGORY_OPENABLE);
+        startActivityForResult(picker, PICK_REFERENCE);
+    }
+
+    private void importReference(Uri uri) {
+        String name = queryDisplayName(uri);
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (!(lower.endsWith(".dll") || lower.endsWith(".winmd"))) {
+            status.setText("Dependência ignorada: escolha DLL ou WINMD.");
+            return;
+        }
+        try {
+            File target = new File(userReferencesDirectory(), name.replaceAll("[^A-Za-z0-9._-]", "_"));
+            try (InputStream input = getContentResolver().openInputStream(uri);
+                 FileOutputStream output = new FileOutputStream(target)) {
+                if (input == null) throw new IllegalStateException("Não foi possível ler a dependência.");
+                byte[] buffer = new byte[65536];
+                int count;
+                while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            }
+            status.setText("Referência adicionada: " + target.getName());
+        } catch (Throwable error) {
+            status.setText("Falha ao adicionar referência: " + error.getMessage());
+        }
+    }
+
+    private void recompileSource(String kind) {
+        if (currentFile == null || sourceEditor == null) {
+            status.setText("Abra um assembly e entre na aba C# Code antes de recompilar.");
+            return;
+        }
+        String source = sourceEditor.getText().toString();
+        if (source.trim().isEmpty()) {
+            status.setText("O editor C# está vazio.");
+            return;
+        }
+        try {
+            File work = new File(getCacheDir(), "ilspy-recompile");
+            if (!work.exists() && !work.mkdirs())
+                throw new IllegalStateException("Não foi possível criar a pasta de compilação.");
+            File sourceFile = new File(work, "EditedAssembly.cs");
+            try (FileOutputStream output = new FileOutputStream(sourceFile)) {
+                output.write(source.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+
+            String baseName = displayName.replaceFirst("(?i)\\\\.(dll|exe|winmd|netmodule|winmdobj)$", "");
+            if (baseName.isEmpty()) baseName = "RebuiltAssembly";
+            String extension = kind.equals("winmdobj") ? ".winmdobj" : "." + kind;
+            File outputFile = new File(work, baseName + "-rebuilt" + extension);
+            File frameworkRefs = compilerReferencesDirectory();
+            File customRefs = userReferencesDirectory();
+            String references = frameworkRefs.getAbsolutePath() + ";" + customRefs.getAbsolutePath();
+
+            status.setText("Roslyn compilando " + kind.toUpperCase(Locale.ROOT) + "…");
+            String result = NativeBridge.nativeRecompile(
+                    sourceFile.getAbsolutePath(), outputFile.getAbsolutePath(),
+                    references, kind, baseName + "Rebuilt");
+            if (result == null || !result.startsWith("COMPILE_OK")) {
+                status.setText("Falha na recompilação");
+                showBuildDiagnostics(result == null ? "O compilador não retornou resultado." : result);
+                return;
+            }
+            if (!outputFile.exists() || outputFile.length() == 0) {
+                status.setText("O compilador não gerou o arquivo de saída.");
+                showBuildDiagnostics(result);
+                return;
+            }
+            pendingExport = outputFile;
+            pendingExportName = outputFile.getName();
+            status.setText("Compilação concluída · " + outputFile.length() + " bytes");
+            Intent create = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            create.addCategory(Intent.CATEGORY_OPENABLE);
+            create.setType("application/octet-stream");
+            create.putExtra(Intent.EXTRA_TITLE, outputFile.getName());
+            startActivityForResult(create, PICK_OUTPUT);
+        } catch (Throwable error) {
+            status.setText("Falha no recompilador: " + error.getMessage());
+        }
+    }
+
+    private void showBuildDiagnostics(String message) {
+        body.removeAllViews();
+        addSection("Build Output");
+        TextView details = text(message, 11, white, false);
+        details.setTypeface(Typeface.MONOSPACE);
+        details.setGravity(Gravity.TOP | Gravity.START);
+        details.setTextIsSelectable(true);
+        details.setPadding(dp(10), dp(10), dp(10), dp(10));
+        details.setBackground(rounded(chrome, border));
+        body.addView(details, new LinearLayout.LayoutParams(-1, -2));
+        body.addView(actionButton("Voltar ao código", true, this::renderCode));
+    }
+
+'''
+if helper_marker not in ui:
+    raise SystemExit("Could not locate chooseFile insertion point")
+ui = ui.replace(helper_marker, helpers + helper_marker)
+
+workbench.write_text(ui, encoding="utf-8")
+
+print("Added Roslyn editor/recompiler for managed DLL/EXE and WINMDOBJ intermediate; ILSpy decompiler code untouched.")
+
 print("Patched to bundle engine as ABI-specific APK assets and load via dlopen; bridge no longer DT_NEEDED-links engine.")
