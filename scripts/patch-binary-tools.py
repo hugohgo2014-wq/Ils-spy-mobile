@@ -344,7 +344,20 @@ public final class BinaryWorkbenchActivity extends Activity {
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
-        if (result != RESULT_OK || data == null || data.getData() == null) return;
+        if (request == SAVE_FILE) {
+            if (result != RESULT_OK || data == null || data.getData() == null) {
+                status.setText("Salvamento cancelado.");
+                pendingSave = null;
+                pendingSaveName = "";
+                return;
+            }
+            if (pendingSave == null || !pendingSave.isFile() || pendingSave.length() == 0) {
+                status.setText("Arquivo temporário para salvar não existe ou está vazio.");
+                return;
+            }
+        } else if (result != RESULT_OK || data == null || data.getData() == null) {
+            return;
+        }
         Uri uri = data.getData();
         if (request == PICK_FILE) {
             String name = displayName(uri);
@@ -366,6 +379,8 @@ public final class BinaryWorkbenchActivity extends Activity {
                 while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
                 out.flush();
                 status.setText("Salvo: " + pendingSaveName);
+                pendingSave = null;
+                pendingSaveName = "";
             } catch (Throwable error) {
                 status.setText("Erro ao salvar: " + error.getMessage());
             }
@@ -405,12 +420,18 @@ public final class BinaryWorkbenchActivity extends Activity {
 
     private ElfInfo readElf(File file) throws Exception {
         try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
-            if (raf.length() < 52) throw new IllegalArgumentException("ELF pequeno demais.");
-            byte[] h = new byte[64];
-            raf.readFully(h);
-            if (h[0] != 0x7f || h[1] != 'E' || h[2] != 'L' || h[3] != 'F')
+            if (raf.length() < 16) throw new IllegalArgumentException("ELF pequeno demais.");
+            byte[] ident = new byte[16];
+            raf.readFully(ident);
+            if (ident[0] != 0x7f || ident[1] != 'E' || ident[2] != 'L' || ident[3] != 'F')
                 throw new IllegalArgumentException("Assinatura ELF inválida.");
-            int elfClass = h[4] & 255;
+            int elfClass = ident[4] & 255;
+            int headerSize = elfClass == 2 ? 64 : elfClass == 1 ? 52 : 0;
+            if (headerSize == 0) throw new IllegalArgumentException("Classe ELF inválida.");
+            if (raf.length() < headerSize) throw new IllegalArgumentException("Cabeçalho ELF truncado.");
+            byte[] h = new byte[headerSize];
+            System.arraycopy(ident, 0, h, 0, ident.length);
+            raf.readFully(h, ident.length, headerSize - ident.length);
             if ((h[5] & 255) != 1) throw new IllegalArgumentException("ELF big-endian não é suportado.");
             ByteBuffer b = ByteBuffer.wrap(h).order(ByteOrder.LITTLE_ENDIAN);
             ElfInfo info = new ElfInfo();
@@ -582,6 +603,9 @@ public final class BinaryWorkbenchActivity extends Activity {
 
     private void loadSmali(File file) {
         try {
+            if (selectedSmali != null && editor != null && selectedSmali.isFile()) {
+                Files.write(selectedSmali.toPath(), editor.getText().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
             selectedSmali = file;
             editor.setText(new String(Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8));
             status.setText("Editando: " + workspace.toPath().relativize(file.toPath()));
@@ -688,7 +712,13 @@ public final class BinaryWorkbenchActivity extends Activity {
         create.addCategory(Intent.CATEGORY_OPENABLE);
         create.setType("application/octet-stream");
         create.putExtra(Intent.EXTRA_TITLE, name);
-        startActivityForResult(create, SAVE_FILE);
+        try {
+            startActivityForResult(create, SAVE_FILE);
+        } catch (Throwable error) {
+            status.setText("Não foi possível abrir o seletor para salvar: " + error.getMessage());
+            pendingSave = null;
+            pendingSaveName = "";
+        }
     }
 
     private void deleteTree(File file) throws Exception {
