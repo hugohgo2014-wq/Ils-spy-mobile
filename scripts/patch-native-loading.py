@@ -955,13 +955,13 @@ cpp_source = cpp_source.replace(
 )
 cpp_source = cpp_source.replace(
     'bindEngineSymbol(g_engine.freeString, "ilspy_engine_free_string");',
-    'bindEngineSymbol(g_engine.freeString, "ilspy_engine_free_string") &&\n        bindEngineSymbol(g_engine.recompile, "ilspy_recompile_csharp") &&\n        bindEngineSymbol(g_engine.freeRecompilerString, "ilspy_recompiler_free_string");'
+    'bindEngineSymbol(g_engine.freeString, "ilspy_engine_free_string");'
 )
 cpp_source = cpp_source.replace(
     'g_engine.freeString = nullptr;\n        const std::string message',
     'g_engine.freeString = nullptr;\n        g_engine.recompile = nullptr;\n        g_engine.freeRecompilerString = nullptr;\n        const std::string message'
 )
-if "char* (*recompile)(" not in cpp_source or 'bindEngineSymbol(g_engine.recompile' not in cpp_source:
+if "char* (*recompile)(" not in cpp_source:
     raise SystemExit("Could not add compiler exports to the native engine API")
 if "Java_com_ilspy_mobile_NativeBridge_nativeRecompile" not in cpp_source:
     cpp_source += r'''
@@ -987,6 +987,24 @@ Java_com_ilspy_mobile_NativeBridge_nativeRecompile(
     return env->NewStringUTF(message.c_str());
 }
 '''
+cpp_source = cpp_source.replace(
+    '    g_engine.loaded = true;\n    g_engine.error.clear();',
+    """    // Optional Roslyn exports must never block the original ILSpy decompiler.
+    dlerror();
+    g_engine.recompile = reinterpret_cast<char* (*)(const char*, const char*, const char*, const char*, const char*)>(
+        dlsym(g_engine.handle, "ilspy_recompile_csharp"));
+    dlerror();
+    g_engine.freeRecompilerString = reinterpret_cast<void (*)(char*)>(
+        dlsym(g_engine.handle, "ilspy_recompiler_free_string"));
+    g_engine.loaded = true;
+    g_engine.error.clear();"""
+)
+cpp_source = cpp_source.replace(
+    '    const std::string source = javaStringToUtf8(env, sourcePath);',
+    '    if (g_engine.recompile == nullptr || g_engine.freeRecompilerString == nullptr)\\n' +
+    '        return env->NewStringUTF("COMPILE_ERROR: Optional Roslyn compiler exports are not available.");\\n' +
+    '    const std::string source = javaStringToUtf8(env, sourcePath);'
+)
 cpp.write_text(cpp_source, encoding="utf-8")
 
 bridge = root / "app/src/main/java/com/ilspy/mobile/NativeBridge.java"
