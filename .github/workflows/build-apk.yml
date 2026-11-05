@@ -56,9 +56,9 @@ jobs:
           git clone --depth 1 --branch infra-improvs https://github.com/agnostic-apollo/termux-packages.git "$TERMUX_DIR"
           cd "$TERMUX_DIR"
           grep -n '^TERMUX_APP_PACKAGE' scripts/properties.sh
-          sed -i -E 's/^TERMUX_APP_PACKAGE=.*/TERMUX_APP_PACKAGE=com.ilspy.mobile/' scripts/properties.sh
+          sed -i -E 's/^TERMUX_APP__PACKAGE_NAME=.*/TERMUX_APP__PACKAGE_NAME="com.ilspy.mobile"/' scripts/properties.sh
           grep -n '^TERMUX_APP_PACKAGE' scripts/properties.sh
-          ./scripts/run-docker.sh ./scripts/build-bootstraps.sh --architectures aarch64 --add clang cmake ninja git python make pkg-config binutils
+          ./scripts/run-docker.sh ./scripts/build-bootstraps.sh --architectures aarch64 --add clang,cmake,ninja,git,python,make,pkg-config,binutils
           ./scripts/run-docker.sh ./scripts/build-bootstraps.sh --architectures x86_64 --add clang cmake ninja git python make pkg-config binutils
           mkdir -p "$RUNNER_TEMP/ilspy-mobile/app/src/main/assets/termux"
           for arch in aarch64 x86_64; do
