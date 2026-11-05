@@ -215,6 +215,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -616,14 +617,21 @@ public final class BinaryWorkbenchActivity extends Activity {
         builder.redirectErrorStream(true);
         java.util.Map<String, String> env = builder.environment();
         env.put("LD_LIBRARY_PATH", libraryDir.getAbsolutePath());
-        env.put("RZ_LIBR_PLUGINS", pluginDir.getAbsolutePath());
+        env.put("RZ_LIB_PLUGINS", pluginDir.getAbsolutePath());
         env.put("RZ_PREFIX", prefix.getAbsolutePath());
         env.put("RZ_MAGICPATH", new File(prefix, "share/rizin/magic").getAbsolutePath());
-        env.put("RZ_RDATAHOME", new File(getFilesDir(), "rizin-data").getAbsolutePath());
+        env.put("RZ_DATAHOME", new File(getFilesDir(), "rizin-data").getAbsolutePath());
+        File logFile = new File(getCacheDir(), "rizin-ghidra-output.txt");
+        builder.redirectOutput(logFile);
         Process process = builder.start();
+        if (!process.waitFor(15, TimeUnit.MINUTES)) {
+            process.destroyForcibly();
+            throw new IOException("Tempo limite de 15 minutos excedido ao descompilar o ELF.");
+        }
+        int exit = process.exitValue();
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         boolean truncated = false;
-        try (InputStream in = process.getInputStream()) {
+        try (InputStream in = new FileInputStream(logFile)) {
             byte[] buffer = new byte[32768];
             int count;
             while ((count = in.read(buffer)) != -1) {
@@ -631,7 +639,7 @@ public final class BinaryWorkbenchActivity extends Activity {
                 else truncated = true;
             }
         }
-        int exit = process.waitFor();
+        logFile.delete();
         String result = new String(bytes.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
         if (truncated) result += "\\n\\n/* Output truncated at 20 MiB. */";
         String lower = result.toLowerCase(Locale.ROOT);
