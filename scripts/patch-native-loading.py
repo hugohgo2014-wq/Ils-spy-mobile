@@ -1050,7 +1050,7 @@ ui = ui.replace(
 )
 ui = ui.replace(
     "private EditText search;\n    private File currentFile;",
-    "private EditText search, sourceEditor;\n    private File currentFile, pendingExport;\n    private String pendingExportName = \"\";\n    private boolean buildRunning;\n    private ResultReceiver compilerReceiver;"
+    "private EditText search, sourceEditor;\n    private File currentFile, pendingExport;\n    private String pendingExportName = \"\";\n    private boolean buildRunning;\n    private ResultReceiver compilerReceiver;\\n    private ProgressBar compileProgress;"
 )
 ui = ui.replace(
     "drawable.setColor(fill);\n        drawable.setCornerRadius(dp(8));",
