@@ -169,7 +169,7 @@ public final class TerminalService extends Service {
         PendingIntent pi = PendingIntent.getActivity(this, 0, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification notification = new Notification.Builder(this, CHANNEL)
-                .setSmallIcon(android.R.drawable.stat_sys_terminal)
+                .setSmallIcon(android.R.drawable.ic_menu_manage)
                 .setContentTitle("ILSpy Mobile · Terminal ativo")
                 .setContentText("O ambiente de compilação continua em execução")
                 .setContentIntent(pi).setOngoing(true).build();
@@ -289,7 +289,7 @@ public final class TerminalActivity extends Activity {
                 if (!text.isEmpty()) {
                     output.append(text);
                     if (output.length() > 100000) output.setText(output.getText().subSequence(output.length()-70000, output.length()));
-                    ((ScrollView)output.getParent().getParent()).post(() -> ((ScrollView)output.getParent().getParent()).fullScroll(View.FOCUS_DOWN));
+                    scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
                 }
             }
             handler.postDelayed(this, 250);
@@ -315,7 +315,7 @@ public final class TerminalActivity extends Activity {
         title.setText("ILSpy Mobile  /  Termux");
         title.setTextColor(Color.WHITE); title.setTextSize(18); title.setPadding(4,4,4,12);
         root.addView(title);
-        ScrollView scroll = new ScrollView(this);
+        scroll = new ScrollView(this);
         output = new TextView(this);
         output.setTextColor(Color.rgb(180,235,205));
         output.setTextSize(12);
@@ -352,7 +352,7 @@ public final class TerminalActivity extends Activity {
         });
         Intent serviceIntent = new Intent(this, TerminalService.class);
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(serviceIntent); else startService(serviceIntent);
-        bindService(serviceIntent, connection, Context.BIND_AUTO_CREATE);
+        bound = bindService(serviceIntent, connection, Context.BIND_AUTO_CREATE);
     }
 
     @Override protected void onDestroy() {
