@@ -43,7 +43,7 @@ else:
     raise SystemExit("settings.gradle(.kts) was not found")
 
 g = gradle.read_text(encoding="utf-8")
-dependency = "    implementation 'org.apktool:apktool-lib:3.0.3'"
+dependency = "    implementation 'org.apktool:apktool-lib:3.0.3'\n    implementation 'com.github.iBotPeaches.smali:smali:b6365a84f4'"
 if "org.apktool:apktool-lib" not in g:
     match = re.search(r"(?m)^dependencies\s*\{", g)
     if match:
