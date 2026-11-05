@@ -33,6 +33,17 @@ The .NET Android Bionic NativeAOT shared-library path is experimental and curren
 
 See `README.md` and `THIRD_PARTY_NOTICES.md` inside the source archive for setup, architecture and licensing.
 
+## Native and Android binary workbench
+
+The **Binary Lab** screen adds these formats:
+
+- **ELF / `.so`:** reads ELF32/ELF64 headers and locates an executable load segment. Capstone 5.0.6 disassembles the first 64 KiB of that segment for ARM, AArch64, x86 and x86_64. A bounded byte-patch tool can write a *new patched copy* when the replacement bytes stay inside that executable segment.
+- **Important native limitation:** Capstone is a disassembler, not a C/C++ decompiler or linker. The app does not reconstruct original C/C++ source and does not rebuild a complete shared library from pseudocode. The `.so` patch action edits machine-code bytes in a copy; it is not a full source recompilation.
+- **DEX:** Apktool's Smali decoder extracts editable `.smali` classes. The integrated Smali assembler rebuilds a DEX from the edited workspace and exports it with Android's Save As picker.
+- **`resources.arsc`:** Apktool decodes the binary resource table into XML files that can be edited and exported. A standalone `.arsc` recompiler is not provided: rebuilding the binary resource table needs the surrounding APK project, resource files/framework context and a compatible AAPT2 build pipeline.
+
+The Binary Lab works on a copy in the app's private cache. It does not execute imported native libraries.
+
 ## Editing and recompiling
 
 The Android workbench includes an editable C# source view and an in-app Roslyn compiler:
