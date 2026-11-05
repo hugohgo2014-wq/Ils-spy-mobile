@@ -112,9 +112,10 @@ jobs:
           for abi in arm64-v8a x86_64; do
             library="$RUNNER_TEMP/ilspy-mobile/app/src/main/assets/native/$abi/libilspy_engine.so"
             test -s "$library"
-            symbols="$("$NM" -D --defined-only "$library")"
+            symbols_file="$RUNNER_TEMP/native-exports-$abi.txt"
+            "$NM" -D --defined-only "$library" | tee "$symbols_file"
             for symbol in ilspy_engine_version ilspy_inspect_file ilspy_decompile_file ilspy_decompile_type ilspy_engine_free_string ilspy_recompile_csharp ilspy_recompiler_free_string; do
-              if ! grep -Eq "[[:space:]]${symbol}$" <<<"$symbols"; then
+              if ! grep -Fq "$symbol" "$symbols_file"; then
                 echo "::error::NativeAOT export missing for $abi: $symbol"
                 exit 1
               fi
