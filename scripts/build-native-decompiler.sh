@@ -162,9 +162,8 @@ EOF
       *.so|*.so.*) cp -L "$library" "$jni/$(basename "$library")" ;;
     esac
   done
-  find "$prefix/lib/rizin/plugins" -type f -name "*.so" -print0 | while IFS= read -r -d "" plugin; do
-    cp "$plugin" "$jni/$(basename "$plugin")"
-  done
+  # Keep core_ghidra.so in the private plugin directory under assets.
+  # RZ_LIB_PLUGINS points there explicitly; do not scan nativeLibraryDir.
 
   test -s "$asset/lib/rizin/plugins/core_ghidra.so"
   test -s "$asset/lib/rizin/plugins/rz_ghidra_sleigh/AARCH64.sla"
