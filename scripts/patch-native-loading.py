@@ -631,13 +631,13 @@ public final class WorkbenchActivity extends Activity {
 
     private SpannableString highlightCSharp(String source) {
         SpannableString styled = new SpannableString(source);
-        colorMatches(styled, "\\\\b(using|namespace|public|private|protected|internal|static|class|interface|struct|enum|record|void|int|string|bool|byte|long|short|float|double|decimal|var|new|return|if|else|for|foreach|while|do|switch|case|break|continue|throw|try|catch|finally|async|await|override|virtual|abstract|sealed|readonly|const|this|base|null|true|false)\\\\b",
+        colorMatches(styled, "\\b(using|namespace|public|private|protected|internal|static|class|interface|struct|enum|record|void|int|string|bool|byte|long|short|float|double|decimal|var|new|return|if|else|for|foreach|while|do|switch|case|break|continue|throw|try|catch|finally|async|await|override|virtual|abstract|sealed|readonly|const|this|base|null|true|false)\\b",
                 Color.rgb(0, 82, 150));
-        colorMatches(styled, "\\"(?:\\\\\\\\.|[^\\"\\\\\\\\])*\\"", Color.rgb(163, 75, 35));
-        colorMatches(styled, "'(?:\\\\\\\\.|[^'\\\\\\\\])'", Color.rgb(163, 75, 35));
-        colorMatches(styled, "//[^\\\\n]*", Color.rgb(110, 130, 105));
-        colorMatches(styled, "/\\\\*[\\\\s\\\\S]*?\\\\*/", Color.rgb(110, 130, 105));
-        colorMatches(styled, "\\\\b[0-9]+\\\\b", Color.rgb(120, 70, 160));
+        colorMatches(styled, "\"(?:\\\\.|[^\"\\\\])*\"", Color.rgb(163, 75, 35));
+        colorMatches(styled, "'(?:\\\\.|[^'\\\\])'", Color.rgb(163, 75, 35));
+        colorMatches(styled, "//[^\\n]*", Color.rgb(110, 130, 105));
+        colorMatches(styled, "/\\*[\\s\\S]*?\\*/", Color.rgb(110, 130, 105));
+        colorMatches(styled, "\\b[0-9]+\\b", Color.rgb(120, 70, 160));
         return styled;
     }
 
@@ -744,9 +744,9 @@ public final class WorkbenchActivity extends Activity {
 
     private void collectTypes(String source) {
         types.clear();
-        Matcher nsMatcher = Pattern.compile("(?m)^\\\\s*namespace\\\\s+([A-Za-z_][A-Za-z0-9_.]*)").matcher(source);
+        Matcher nsMatcher = Pattern.compile("(?m)^\\s*namespace\\s+([A-Za-z_][A-Za-z0-9_.]*)").matcher(source);
         String namespace = nsMatcher.find() ? nsMatcher.group(1) : "";
-        Pattern pattern = Pattern.compile("(?m)^\\\\s*(?:(?:public|private|protected|internal|static|abstract|sealed|partial|readonly|new|unsafe)\\\\s+)*(?:class|interface|struct|enum|record)\\\\s+([A-Za-z_][A-Za-z0-9_]*)");
+        Pattern pattern = Pattern.compile("(?m)^\\s*(?:(?:public|private|protected|internal|static|abstract|sealed|partial|readonly|new|unsafe)\\s+)*(?:class|interface|struct|enum|record)\\s+([A-Za-z_][A-Za-z0-9_]*)");
         Matcher matcher = pattern.matcher(source);
         while (matcher.find()) {
             String name = matcher.group(1);
