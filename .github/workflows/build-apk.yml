@@ -164,18 +164,19 @@ jobs:
           source = pathlib.Path(sys.argv[1])
           content = source.read_text()
           old = """        if (packageName === undefined) {
-                  console.error(`Package name not found for path: ${path}`);
-                  process.exit(1);
+                    console.error(`Package name not found for path: ${path}`);
+                    process.exit(1);
                   }"""
           new = """        if (packageName === undefined) {
-                  console.warn(`WARNING: Package name not found for path: ${path}. Skipping...`);
-                  return;
+                    console.warn(`WARNING: Package name not found for path: ${path}. Skipping...`);
+                    return;
                   }"""
           if content.count(old) != 1:
               raise SystemExit("Unexpected command-not-found generate-db.js; refusing an unverified patch")
-          source.write_text(content.replace(old, new))
-          if "process.exit(1)" in source.read_text():
+          patched = content.replace(old, new)
+          if "console.error(`Package name not found for path: ${path}`)" in patched:
               raise SystemExit("command-not-found fatal alternatives check remains")
+          source.write_text(patched)
           print("Applied upstream-compatible command-not-found alternatives fix")
           PY
           }
