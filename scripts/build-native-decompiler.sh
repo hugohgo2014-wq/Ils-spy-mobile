@@ -163,7 +163,7 @@ EOF
     esac
   done
   find "$prefix/lib/rizin/plugins" -type f -name "*.so" -print0 | while IFS= read -r -d "" plugin; do
-    cp "$plugin" "$jni/lib$(basename "$plugin" .so).so"
+    cp "$plugin" "$jni/$(basename "$plugin")"
   done
 
   test -s "$asset/lib/rizin/plugins/core_ghidra.so"
