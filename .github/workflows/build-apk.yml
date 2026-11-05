@@ -128,7 +128,7 @@ termux_step_pre_configure() {
     local interface_file="$TERMUX_PKG_SRCDIR/libunbound/python/libunbound.i"
     test -f "$interface_file"
     sed -i 's/\$function/\$action/g' "$interface_file"
-    if grep -Fq '\$function' "$interface_file"; then
+    if grep -Fq '$function' "$interface_file"; then
         echo "Unbound SWIG compatibility patch did not apply" >&2
         return 1
     fi
