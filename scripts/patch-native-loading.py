@@ -462,6 +462,10 @@ public final class WorkbenchActivity extends Activity {
         LinearLayout.LayoutParams rebuildParams = new LinearLayout.LayoutParams(-1, dp(46));
         rebuildParams.topMargin = dp(5);
         root.addView(rebuildEntry, rebuildParams);
+        Button saveSourceEntry = actionButton("↓  SALVAR CÓDIGO C# (.cs)", false, this::saveCSharpSource);
+        LinearLayout.LayoutParams saveSourceParams = new LinearLayout.LayoutParams(-1, dp(42));
+        saveSourceParams.topMargin = dp(4);
+        root.addView(saveSourceEntry, saveSourceParams);
 
         assemblyName = text("Assemblies  ·  nenhum assembly aberto", 13, white, true);
         assemblyName.setPadding(dp(10), dp(8), dp(10), dp(8));
@@ -1127,7 +1131,9 @@ new_start = """super.onActivityResult(request, result, data);
                 int count;
                 while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
                 output.flush();
-                status.setText("Arquivo recompilado salvo: " + pendingExportName);
+                status.setText(pendingExportName.toLowerCase(Locale.ROOT).endsWith(".cs")
+                        ? "Código C# salvo: " + pendingExportName
+                        : "Arquivo recompilado salvo: " + pendingExportName);
             } catch (Throwable error) {
                 status.setText("Falha ao exportar: " + error.getMessage());
             }
@@ -1198,6 +1204,39 @@ helpers = r'''    private File compilerReferencesDirectory() throws Exception {
             status.setText("Referência adicionada: " + target.getName());
         } catch (Throwable error) {
             status.setText("Falha ao adicionar referência: " + error.getMessage());
+        }
+    }
+
+    private void saveCSharpSource() {
+        String source = sourceEditor != null ? sourceEditor.getText().toString() : decompiled;
+        if (source == null || source.trim().isEmpty()) {
+            status.setText("Não há código C# descompilado para salvar.");
+            return;
+        }
+        try {
+            String base = selectedType == null || selectedType.trim().isEmpty()
+                    ? displayName.replaceFirst("(?i)\\.(dll|exe|winmd|netmodule|winmdobj)$", "")
+                    : selectedType.substring(selectedType.lastIndexOf('.') + 1);
+            base = base.replaceAll("[^A-Za-z0-9._-]", "_");
+            if (base.isEmpty()) base = "DecompiledSource";
+            File folder = new File(getCacheDir(), "ilspy-csharp-export");
+            if (!folder.exists() && !folder.mkdirs())
+                throw new IllegalStateException("Não foi possível criar a pasta de exportação.");
+            File cs = new File(folder, base + ".cs");
+            try (FileOutputStream output = new FileOutputStream(cs, false)) {
+                output.write(source.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                output.flush();
+            }
+            pendingExport = cs;
+            pendingExportName = cs.getName();
+            Intent create = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            create.addCategory(Intent.CATEGORY_OPENABLE);
+            create.setType("text/plain");
+            create.putExtra(Intent.EXTRA_TITLE, cs.getName());
+            status.setText("Código C# preparado · escolha onde salvar o .cs");
+            startActivityForResult(create, PICK_OUTPUT);
+        } catch (Throwable error) {
+            status.setText("Falha ao salvar C#: " + error.getMessage());
         }
     }
 
