@@ -80,10 +80,6 @@ cpu_family = '$cpu_family'
 cpu = '$cpu'
 endian = 'little'
 EOF
-  # Correct the NDK compiler command names (the target API suffix belongs
-  # before the compiler executable's final name).
-  sed -i 's/"33-clang/33-clang/g; s/"33-clang++/33-clang++/g' "$cross"
-
   echo "==> Building Rizin for $abi"
   meson setup "$build" "$RIZIN_SRC" \
     --cross-file "$cross" \
