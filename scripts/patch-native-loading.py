@@ -324,133 +324,447 @@ workbench = root / "app/src/main/java/com/ilspy/mobile/WorkbenchActivity.java"
 workbench.write_text(r'''package com.ilspy.mobile;
 
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.OpenableColumns;
+import android.text.Editable;
+import android.text.SpannableString;
+import android.text.TextWatcher;
+import android.text.style.ForegroundColorSpan;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import android.graphics.Typeface;
-import android.graphics.Color;
-import android.graphics.drawable.GradientDrawable;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
+/**
+ * Mobile adaptation of ILSpy's assembly-browser + decompiled-source workflow.
+ * The NativeAOT engine and JNI bridge are intentionally kept unchanged.
+ */
 public final class WorkbenchActivity extends Activity {
     private static final int PICK_ASSEMBLY = 4102;
-    private int bg = Color.rgb(18, 21, 28), panel = Color.rgb(29, 34, 44);
-    private int border = Color.rgb(55, 65, 81), accent = Color.rgb(35, 155, 219);
-    private int text = Color.rgb(226, 232, 240), muted = Color.rgb(148, 163, 184);
-    private LinearLayout root, toolbar, content, bottom;
-    private TextView title, status, code;
+    private static final int TAB_EXPLORER = 0, TAB_CODE = 1, TAB_METADATA = 2;
+
+    // Desktop ILSpy-inspired palette: dark explorer chrome + warm code editor.
+    private final int chrome = Color.rgb(34, 38, 44);
+    private final int chrome2 = Color.rgb(47, 52, 60);
+    private final int border = Color.rgb(76, 84, 94);
+    private final int accent = Color.rgb(35, 132, 190);
+    private final int editorBg = Color.rgb(250, 249, 239);
+    private final int editorFg = Color.rgb(39, 43, 47);
+    private final int muted = Color.rgb(165, 176, 189);
+    private final int white = Color.rgb(241, 245, 249);
+
+    private LinearLayout root, body, tabBar;
+    private TextView status, assemblyName;
+    private EditText search;
     private File currentFile;
-    private String inspectResult = "", decompiled = "";
+    private String displayName = "";
+    private String inspectResult = "";
+    private String decompiled = "";
+    private String selectedType = "";
+    private int activeTab = TAB_EXPLORER;
+    private final ArrayList<TypeEntry> types = new ArrayList<>();
+
+    private static final class TypeEntry {
+        final String name;
+        final String fullName;
+        TypeEntry(String name, String fullName) {
+            this.name = name;
+            this.fullName = fullName;
+        }
+    }
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        getWindow().setStatusBarColor(bg);
-        getWindow().setNavigationBarColor(bg);
-        getWindow().getDecorView().setSystemUiVisibility(0);
+        getWindow().setStatusBarColor(chrome);
+        getWindow().setNavigationBarColor(chrome);
         buildShell();
         boolean ready = NativeBridge.initialize(getApplicationContext());
-        status.setText(ready ? "ILSpy engine · " + NativeBridge.nativeEngineVersion()
-                : "Engine unavailable · " + NativeBridge.loadError());
-        status.setTextColor(ready ? Color.rgb(52, 211, 153) : Color.rgb(248, 113, 113));
+        status.setText(ready
+                ? "Motor ILSpy pronto · " + NativeBridge.nativeEngineVersion()
+                : "Motor indisponível · " + NativeBridge.loadError());
+        status.setTextColor(ready ? Color.rgb(77, 210, 164) : Color.rgb(248, 113, 113));
     }
 
-    private GradientDrawable shape(int color, int stroke) {
-        GradientDrawable d = new GradientDrawable();
-        d.setColor(color); d.setCornerRadius(dp(12));
-        if (stroke != 0) d.setStroke(dp(1), stroke);
-        return d;
+    private int dp(float value) {
+        return (int)(value * getResources().getDisplayMetrics().density + .5f);
     }
-    private int dp(float v) { return (int)(v * getResources().getDisplayMetrics().density + .5f); }
-    private TextView label(String value, float size, int color, boolean bold) {
-        TextView t = new TextView(this); t.setText(value); t.setTextSize(size);
-        t.setTextColor(color); t.setGravity(Gravity.CENTER_VERTICAL);
-        if (bold) t.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        return t;
+
+    private GradientDrawable rounded(int fill, int stroke) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(fill);
+        drawable.setCornerRadius(dp(8));
+        if (stroke != 0) drawable.setStroke(dp(1), stroke);
+        return drawable;
     }
-    private Button button(String value, boolean primary, Runnable action) {
-        Button b = new Button(this); b.setText(value); b.setAllCaps(false);
-        b.setTextSize(13); b.setTextColor(primary ? Color.WHITE : text);
-        b.setBackground(shape(primary ? accent : panel, primary ? 0 : border));
-        b.setOnClickListener(v -> action.run());
-        return b;
+
+    private TextView text(String value, float size, int color, boolean bold) {
+        TextView view = new TextView(this);
+        view.setText(value);
+        view.setTextSize(size);
+        view.setTextColor(color);
+        view.setGravity(Gravity.CENTER_VERTICAL);
+        if (bold) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        return view;
     }
+
+    private Button actionButton(String caption, boolean primary, Runnable action) {
+        Button button = new Button(this);
+        button.setText(caption);
+        button.setTextSize(12);
+        button.setAllCaps(false);
+        button.setMinHeight(dp(42));
+        button.setTextColor(primary ? Color.WHITE : white);
+        button.setBackground(rounded(primary ? accent : chrome2, primary ? 0 : border));
+        button.setOnClickListener(v -> action.run());
+        return button;
+    }
+
     private void buildShell() {
-        root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(8), dp(16), dp(8)); root.setBackgroundColor(bg);
+        root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(12), dp(5), dp(12), dp(5));
+        root.setBackgroundColor(chrome);
         setContentView(root);
-        toolbar = new LinearLayout(this); toolbar.setGravity(Gravity.CENTER_VERTICAL);
+
+        // ILSpy-style menu/tool bar.
+        LinearLayout toolbar = new LinearLayout(this);
         toolbar.setOrientation(LinearLayout.HORIZONTAL);
-        TextView brand = label("ILSpy", 23, text, true);
-        toolbar.addView(brand, new LinearLayout.LayoutParams(0, dp(52), 1));
-        toolbar.addView(button("＋ Abrir assembly", true, this::chooseFile));
+        toolbar.setGravity(Gravity.CENTER_VERTICAL);
+        TextView brand = text("ILSpy", 23, white, true);
+        toolbar.addView(brand, new LinearLayout.LayoutParams(0, dp(50), 1));
+        toolbar.addView(actionButton("Abrir", true, this::chooseFile));
+        toolbar.addView(actionButton("Copiar", false, this::copyCode));
         root.addView(toolbar);
-        status = label("Inicializando motor…", 12, muted, false);
-        status.setPadding(dp(2), 0, 0, dp(12)); root.addView(status);
-        LinearLayout filebar = new LinearLayout(this); filebar.setOrientation(LinearLayout.VERTICAL);
-        filebar.setPadding(dp(14), dp(10), dp(14), dp(10)); filebar.setBackground(shape(panel, border));
-        title = label("Nenhum assembly aberto", 15, text, true);
-        filebar.addView(title);
-        TextView hint = label("Assembly Explorer   ›   C# Code", 11, muted, false);
-        filebar.addView(hint); root.addView(filebar);
-        LinearLayout tabs = new LinearLayout(this); tabs.setOrientation(LinearLayout.HORIZONTAL);
-        tabs.setPadding(0, dp(10), 0, dp(10));
-        tabs.addView(button("Explorer", false, () -> showResult(inspectResult.isEmpty() ? "Abra uma DLL ou EXE .NET para explorar seus assemblies." : inspectResult)));
-        tabs.addView(button("C# Code", true, () -> showResult(decompiled.isEmpty() ? "Selecione um assembly para descompilar." : decompiled)));
-        tabs.addView(button("Info", false, () -> showResult(currentFile == null ? "Nenhum arquivo selecionado." : currentFile.getName() + "\n" + currentFile.length() + " bytes\nCaminho: " + currentFile.getAbsolutePath())));
-        root.addView(tabs);
-        ScrollView scroll = new ScrollView(this);
-        content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(12), dp(12), dp(12), dp(12)); content.setBackground(shape(Color.rgb(248, 249, 251), border));
-        code = label("Bem-vindo ao ILSpy Mobile\n\nAbra um assembly .NET para navegar pelos namespaces, tipos e métodos e visualizar o código C# descompilado.", 13, Color.rgb(35, 42, 52), false);
-        code.setTypeface(Typeface.MONOSPACE); code.setGravity(Gravity.TOP | Gravity.START);
-        code.setTextIsSelectable(true); content.addView(code);
-        scroll.addView(content); root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        bottom = new LinearLayout(this); bottom.setGravity(Gravity.CENTER_VERTICAL);
-        bottom.addView(label("ICSharpCode.Decompiler · ILSpy engine", 11, muted, false), new LinearLayout.LayoutParams(0, dp(42), 1));
-        bottom.addView(button("Copiar código", false, () -> {
-            android.content.ClipboardManager cm = (android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
-            cm.setPrimaryClip(android.content.ClipData.newPlainText("C# code", decompiled));
-        }));
-        root.addView(bottom);
+
+        assemblyName = text("Assemblies  ·  nenhum assembly aberto", 13, white, true);
+        assemblyName.setPadding(dp(10), dp(8), dp(10), dp(8));
+        assemblyName.setBackground(rounded(chrome2, border));
+        root.addView(assemblyName);
+
+        status = text("Inicializando motor…", 11, muted, false);
+        status.setPadding(dp(4), dp(5), dp(4), dp(5));
+        root.addView(status);
+
+        search = new EditText(this);
+        search.setSingleLine(true);
+        search.setTextSize(13);
+        search.setHint("Pesquisar tipo, classe ou método…");
+        search.setHintTextColor(muted);
+        search.setTextColor(white);
+        search.setPadding(dp(12), 0, dp(12), 0);
+        search.setBackground(rounded(chrome2, border));
+        root.addView(search, new LinearLayout.LayoutParams(-1, dp(44)));
+        search.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int st, int count, int after) { }
+            @Override public void onTextChanged(CharSequence s, int st, int before, int count) {
+                if (activeTab == TAB_EXPLORER) renderExplorer();
+            }
+            @Override public void afterTextChanged(Editable e) { }
+        });
+
+        tabBar = new LinearLayout(this);
+        tabBar.setOrientation(LinearLayout.HORIZONTAL);
+        tabBar.setPadding(0, dp(7), 0, dp(7));
+        root.addView(tabBar);
+
+        ScrollView bodyScroll = new ScrollView(this);
+        body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(9), dp(9), dp(9), dp(9));
+        body.setBackground(rounded(chrome2, border));
+        bodyScroll.addView(body);
+        root.addView(bodyScroll, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        TextView footer = text("ICSharpCode.Decompiler  ·  ILSpy", 10, muted, false);
+        footer.setGravity(Gravity.CENTER);
+        footer.setPadding(0, dp(7), 0, dp(4));
+        root.addView(footer);
+
+        updateTabs();
+        renderWelcome();
     }
-    private void showResult(String value) { code.setText(value == null ? "" : value); }
+
+    private void updateTabs() {
+        tabBar.removeAllViews();
+        addTab("Assemblies", TAB_EXPLORER);
+        addTab("C# Code", TAB_CODE);
+        addTab("Metadata", TAB_METADATA);
+    }
+
+    private void addTab(String caption, int tab) {
+        Button button = new Button(this);
+        button.setText(caption);
+        button.setAllCaps(false);
+        button.setTextSize(12);
+        button.setTextColor(activeTab == tab ? Color.WHITE : muted);
+        button.setBackground(rounded(activeTab == tab ? accent : chrome, 0));
+        button.setOnClickListener(v -> {
+            activeTab = tab;
+            updateTabs();
+            renderActiveTab();
+        });
+        tabBar.addView(button, new LinearLayout.LayoutParams(0, dp(42), 1));
+    }
+
+    private void renderWelcome() {
+        body.removeAllViews();
+        addSection("Assembly Explorer");
+        addInfoRow("▸  Assemblies", "Abra uma DLL, EXE .NET ou WINMD para começar.");
+        addInfoRow("▸  References", "As dependências do assembly aparecem na análise.");
+        addInfoRow("▸  Namespaces", "Classes, interfaces, structs e enums são organizados por namespace.");
+        activeTab = TAB_EXPLORER;
+        updateTabs();
+    }
+
+    private void renderActiveTab() {
+        if (activeTab == TAB_EXPLORER) renderExplorer();
+        else if (activeTab == TAB_CODE) renderCode();
+        else renderMetadata();
+    }
+
+    private void addSection(String caption) {
+        TextView heading = text(caption.toUpperCase(Locale.ROOT), 10, Color.rgb(114, 190, 225), true);
+        heading.setPadding(dp(5), dp(9), dp(5), dp(5));
+        body.addView(heading);
+    }
+
+    private void addInfoRow(String caption, String description) {
+        TextView row = text(caption + "\n" + description, 12, white, false);
+        row.setPadding(dp(10), dp(9), dp(10), dp(9));
+        row.setBackground(rounded(chrome, 0));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.bottomMargin = dp(5);
+        body.addView(row, params);
+    }
+
+    private void renderExplorer() {
+        body.removeAllViews();
+        if (currentFile == null) {
+            renderWelcome();
+            return;
+        }
+        addSection("Assembly Explorer");
+        addInfoRow("▾  " + displayName, "Assembly carregado · toque em um tipo para abrir o C#");
+        addInfoRow("▸  Metadata", "Informações e cabeçalho do assembly");
+        addSection("Namespaces and Types");
+        String filter = search.getText() == null ? "" : search.getText().toString().trim().toLowerCase(Locale.ROOT);
+        boolean any = false;
+        for (TypeEntry entry : types) {
+            if (!filter.isEmpty() && !entry.fullName.toLowerCase(Locale.ROOT).contains(filter)) continue;
+            any = true;
+            TextView row = text("  ◇  " + entry.name, 13, white, false);
+            row.setSingleLine(true);
+            row.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            row.setPadding(dp(12), dp(10), dp(8), dp(10));
+            row.setBackground(rounded(chrome, 0));
+            row.setOnClickListener(v -> openType(entry));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+            params.leftMargin = dp(9);
+            params.bottomMargin = dp(3);
+            body.addView(row, params);
+            TextView sub = text(entry.fullName, 10, muted, false);
+            sub.setPadding(dp(36), 0, dp(5), dp(5));
+            body.addView(sub);
+        }
+        if (!any) addInfoRow("Nenhum tipo encontrado", "Tente outra pesquisa.");
+        addSection("References");
+        addInfoRow("▸  Referências e dependências", "Consulte a aba Metadata para ver a inspeção retornada pelo motor.");
+    }
+
+    private void openType(TypeEntry entry) {
+        try {
+            selectedType = entry.fullName;
+            String result = NativeBridge.nativeDecompileType(currentFile.getAbsolutePath(), selectedType);
+            if (result == null || result.startsWith("ILSPY_ERROR:")) {
+                status.setText(result == null ? "O motor não retornou código." : result);
+                return;
+            }
+            decompiled = result;
+            activeTab = TAB_CODE;
+            updateTabs();
+            renderCode();
+            status.setText("Tipo selecionado · " + selectedType);
+        } catch (Throwable error) {
+            status.setText("Falha ao descompilar tipo: " + error.getMessage());
+        }
+    }
+
+    private void renderCode() {
+        body.removeAllViews();
+        addSection("C# Decompiler");
+        addInfoRow(selectedType.isEmpty() ? displayName : selectedType, "C# · código descompilado");
+        if (decompiled.isEmpty()) {
+            addInfoRow("Nenhum código disponível", "Abra um assembly ou selecione um tipo no Explorer.");
+            return;
+        }
+        TextView editor = new TextView(this);
+        editor.setText(highlightCSharp(decompiled));
+        editor.setTextSize(12);
+        editor.setTypeface(Typeface.MONOSPACE);
+        editor.setTextIsSelectable(true);
+        editor.setTextColor(editorFg);
+        editor.setGravity(Gravity.TOP | Gravity.START);
+        editor.setPadding(dp(12), dp(12), dp(12), dp(12));
+        editor.setBackgroundColor(editorBg);
+        editor.setHorizontallyScrolling(true);
+        body.addView(editor, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private SpannableString highlightCSharp(String source) {
+        SpannableString styled = new SpannableString(source);
+        colorMatches(styled, "\\\\b(using|namespace|public|private|protected|internal|static|class|interface|struct|enum|record|void|int|string|bool|byte|long|short|float|double|decimal|var|new|return|if|else|for|foreach|while|do|switch|case|break|continue|throw|try|catch|finally|async|await|override|virtual|abstract|sealed|readonly|const|this|base|null|true|false)\\\\b",
+                Color.rgb(0, 82, 150));
+        colorMatches(styled, "\\"(?:\\\\\\\\.|[^\\"\\\\\\\\])*\\"", Color.rgb(163, 75, 35));
+        colorMatches(styled, "'(?:\\\\\\\\.|[^'\\\\\\\\])'", Color.rgb(163, 75, 35));
+        colorMatches(styled, "//[^\\\\n]*", Color.rgb(110, 130, 105));
+        colorMatches(styled, "/\\\\*[\\\\s\\\\S]*?\\\\*/", Color.rgb(110, 130, 105));
+        colorMatches(styled, "\\\\b[0-9]+\\\\b", Color.rgb(120, 70, 160));
+        return styled;
+    }
+
+    private void colorMatches(SpannableString text, String regex, int color) {
+        Matcher matcher = Pattern.compile(regex).matcher(text);
+        while (matcher.find()) {
+            text.setSpan(new ForegroundColorSpan(color), matcher.start(), matcher.end(), 0);
+        }
+    }
+
+    private void renderMetadata() {
+        body.removeAllViews();
+        addSection("Assembly Metadata");
+        if (currentFile == null) {
+            addInfoRow("Nenhum assembly aberto", "Abra uma DLL, EXE .NET ou WINMD.");
+            return;
+        }
+        addInfoRow("File", displayName);
+        addInfoRow("Size", currentFile.length() + " bytes");
+        addInfoRow("Location", currentFile.getAbsolutePath());
+        addSection("ILSpy Inspection");
+        TextView details = text(inspectResult.isEmpty() ? "Nenhum dado de inspeção." : inspectResult,
+                11, white, false);
+        details.setTypeface(Typeface.MONOSPACE);
+        details.setTextIsSelectable(true);
+        details.setGravity(Gravity.TOP | Gravity.START);
+        details.setPadding(dp(10), dp(10), dp(10), dp(10));
+        details.setBackground(rounded(chrome, 0));
+        body.addView(details, new LinearLayout.LayoutParams(-1, -2));
+    }
+
     private void chooseFile() {
-        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        i.setType("*/*"); i.addCategory(Intent.CATEGORY_OPENABLE);
-        startActivityForResult(i, PICK_ASSEMBLY);
+        Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        picker.setType("*/*");
+        picker.addCategory(Intent.CATEGORY_OPENABLE);
+        startActivityForResult(picker, PICK_ASSEMBLY);
     }
+
+    private String queryDisplayName(Uri uri) {
+        try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (index >= 0) return cursor.getString(index);
+            }
+        } catch (Exception ignored) { }
+        String segment = uri.getLastPathSegment();
+        return segment == null ? "assembly" : segment;
+    }
+
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (request != PICK_ASSEMBLY || result != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
+        displayName = queryDisplayName(uri);
+        String lower = displayName.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".zip") || lower.endsWith(".7z") || lower.endsWith(".rar")) {
+            status.setText("Arquivo compactado selecionado");
+            body.removeAllViews();
+            addInfoRow("Este arquivo é um pacote, não um assembly.",
+                    "Extraia o ZIP e selecione diretamente uma DLL, EXE gerenciado ou WINMD.");
+            return;
+        }
+        if (!(lower.endsWith(".dll") || lower.endsWith(".exe") || lower.endsWith(".winmd"))) {
+            status.setText("Formato não suportado");
+            body.removeAllViews();
+            addInfoRow("Selecione DLL, EXE ou WINMD",
+                    "O ILSpy descompila assemblies .NET; arquivos nativos não contêm IL/C# para recuperar.");
+            return;
+        }
         try {
-            File target = new File(getCacheDir(), "imported-" + System.currentTimeMillis() + ".bin");
-            try (InputStream in = getContentResolver().openInputStream(uri);
-                 FileOutputStream out = new FileOutputStream(target)) {
-                if (in == null) throw new IllegalStateException("Não foi possível ler o arquivo selecionado.");
-                byte[] buf = new byte[65536]; int n;
-                while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+            File target = new File(getCacheDir(), "assembly-" + System.currentTimeMillis() + "-" + displayName.replaceAll("[^A-Za-z0-9._-]", "_"));
+            try (InputStream input = getContentResolver().openInputStream(uri);
+                 FileOutputStream output = new FileOutputStream(target)) {
+                if (input == null) throw new IllegalStateException("Não foi possível ler o arquivo.");
+                byte[] buffer = new byte[65536];
+                int count;
+                while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
             }
             currentFile = target;
-            title.setText(uri.getLastPathSegment() == null ? target.getName() : uri.getLastPathSegment());
-            status.setText("Analisando assembly localmente…");
+            selectedType = "";
+            status.setText("Analisando " + displayName + "…");
+            assemblyName.setText("Assemblies  ·  " + displayName);
             inspectResult = NativeBridge.nativeInspect(target.getAbsolutePath());
             decompiled = NativeBridge.nativeDecompile(target.getAbsolutePath());
-            showResult(decompiled);
-            status.setText("Assembly carregado · descompilação concluída");
-        } catch (Throwable e) {
-            status.setText("Falha ao abrir arquivo");
-            showResult(e.getClass().getSimpleName() + ": " + String.valueOf(e.getMessage()));
+            if (decompiled == null || decompiled.startsWith("ILSPY_ERROR:")) {
+                status.setText(decompiled == null ? "O motor não retornou resultado." : decompiled);
+                types.clear();
+                activeTab = TAB_METADATA;
+                updateTabs();
+                renderMetadata();
+                return;
+            }
+            collectTypes(decompiled);
+            status.setText("Assembly carregado · " + types.size() + " tipo(s)");
+            activeTab = TAB_EXPLORER;
+            updateTabs();
+            renderExplorer();
+        } catch (Throwable error) {
+            status.setText("Falha ao importar: " + error.getClass().getSimpleName());
+            body.removeAllViews();
+            addInfoRow("Não foi possível abrir o assembly", String.valueOf(error.getMessage()));
         }
+    }
+
+    private void collectTypes(String source) {
+        types.clear();
+        Matcher nsMatcher = Pattern.compile("(?m)^\\\\s*namespace\\\\s+([A-Za-z_][A-Za-z0-9_.]*)").matcher(source);
+        String namespace = nsMatcher.find() ? nsMatcher.group(1) : "";
+        Pattern pattern = Pattern.compile("(?m)^\\\\s*(?:(?:public|private|protected|internal|static|abstract|sealed|partial|readonly|new|unsafe)\\\\s+)*(?:class|interface|struct|enum|record)\\\\s+([A-Za-z_][A-Za-z0-9_]*)");
+        Matcher matcher = pattern.matcher(source);
+        while (matcher.find()) {
+            String name = matcher.group(1);
+            String full = namespace.isEmpty() ? name : namespace + "." + name;
+            boolean exists = false;
+            for (TypeEntry type : types) if (type.fullName.equals(full)) exists = true;
+            if (!exists) types.add(new TypeEntry(name, full));
+        }
+    }
+
+    private void copyCode() {
+        if (decompiled.isEmpty()) {
+            status.setText("Não há código para copiar.");
+            return;
+        }
+        ClipboardManager manager = (ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+        manager.setPrimaryClip(ClipData.newPlainText("C# decompiled source", decompiled));
+        status.setText("Código C# copiado.");
     }
 }
 ''', encoding="utf-8")
