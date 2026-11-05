@@ -103,6 +103,25 @@ jobs:
           DOTNET_CLI_TELEMETRY_OPTOUT: '1'
           DOTNET_NOLOGO: '1'
 
+      - name: Verify NativeAOT decompiler and Roslyn exports
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          NM="$NDK_BIN/llvm-nm"
+          for abi in arm64-v8a x86_64; do
+            library="$RUNNER_TEMP/ilspy-mobile/app/src/main/assets/native/$abi/libilspy_engine.so"
+            test -s "$library"
+            symbols="$("$NM" -D --defined-only "$library")"
+            for symbol in ilspy_engine_version ilspy_inspect_file ilspy_decompile_file ilspy_decompile_type ilspy_engine_free_string ilspy_recompile_csharp ilspy_recompiler_free_string; do
+              if ! grep -Eq "[[:space:]]${symbol}$" <<<"$symbols"; then
+                echo "::error::NativeAOT export missing for $abi: $symbol"
+                exit 1
+              fi
+            done
+            echo "Verified all ILSpy + Roslyn exports for $abi"
+          done
+
       - name: Set up Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
         with:
