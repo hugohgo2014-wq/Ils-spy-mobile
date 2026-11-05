@@ -1073,6 +1073,7 @@ new_render = """LinearLayout buildBar = new LinearLayout(this);
         sourceEditor.setElevation(dp(2));
         body.addView(sourceEditor, new LinearLayout.LayoutParams(-1, -2));
         TextView refHint = text("Dependências adicionais: use ＋ Ref na barra superior. " +
+                "WINMDOBJ* é intermediário: gerar um .winmd final exige WinMDExp no Windows. " +
                 "A saída é um assembly novo; recursos, strong-name e identidade original não são preservados automaticamente.",
                 10, muted, false);
         refHint.setPadding(dp(4), dp(8), dp(4), dp(8));
@@ -1194,7 +1195,7 @@ helpers = r'''    private File compilerReferencesDirectory() throws Exception {
                 output.write(source.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             }
 
-            String baseName = displayName.replaceFirst("(?i)\\\\.(dll|exe|winmd|netmodule|winmdobj)$", "");
+            String baseName = displayName.replaceFirst("(?i)\\.(dll|exe|winmd|netmodule|winmdobj)$", "");
             if (baseName.isEmpty()) baseName = "RebuiltAssembly";
             String extension = kind.equals("winmdobj") ? ".winmdobj" : "." + kind;
             File outputFile = new File(work, baseName + "-rebuilt" + extension);
