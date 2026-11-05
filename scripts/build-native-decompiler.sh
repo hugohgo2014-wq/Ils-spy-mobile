@@ -106,6 +106,8 @@ EOF
     -DCMAKE_SHARED_LINKER_FLAGS=-lm \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH="$prefix" \
+    -DRizin_DIR="$prefix/lib/cmake/Rizin" \
+    -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
     -DRIZIN_INSTALL_PLUGDIR="$prefix/lib/rizin/plugins" \
     -DBUILD_SLASPECS=OFF \
