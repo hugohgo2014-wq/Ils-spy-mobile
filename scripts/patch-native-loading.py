@@ -1001,8 +1001,8 @@ cpp_source = cpp_source.replace(
 )
 cpp_source = cpp_source.replace(
     '    const std::string source = javaStringToUtf8(env, sourcePath);',
-    '    if (g_engine.recompile == nullptr || g_engine.freeRecompilerString == nullptr)\\n' +
-    '        return env->NewStringUTF("COMPILE_ERROR: Optional Roslyn compiler exports are not available.");\\n' +
+    '    if (g_engine.recompile == nullptr || g_engine.freeRecompilerString == nullptr)\n' +
+    '        return env->NewStringUTF("COMPILE_ERROR: Optional Roslyn compiler exports are not available.");\n' +
     '    const std::string source = javaStringToUtf8(env, sourcePath);'
 )
 cpp.write_text(cpp_source, encoding="utf-8")
