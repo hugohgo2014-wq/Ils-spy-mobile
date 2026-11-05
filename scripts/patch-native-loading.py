@@ -454,6 +454,14 @@ public final class WorkbenchActivity extends Activity {
         toolbar.addView(actionButton("Abrir", true, this::chooseFile));
         toolbar.addView(actionButton("Copiar", false, this::copyCode));
         root.addView(toolbar);
+        Button rebuildEntry = actionButton("↻  RECOMPILAR / BUILD", true, () -> {
+            activeTab = TAB_CODE;
+            updateTabs();
+            renderCode();
+        });
+        LinearLayout.LayoutParams rebuildParams = new LinearLayout.LayoutParams(-1, dp(46));
+        rebuildParams.topMargin = dp(5);
+        root.addView(rebuildEntry, rebuildParams);
 
         assemblyName = text("Assemblies  ·  nenhum assembly aberto", 13, white, true);
         assemblyName.setPadding(dp(10), dp(8), dp(10), dp(8));
@@ -613,8 +621,7 @@ public final class WorkbenchActivity extends Activity {
         addSection("C# Decompiler");
         addInfoRow(selectedType.isEmpty() ? displayName : selectedType, "C# · código descompilado");
         if (decompiled.isEmpty()) {
-            addInfoRow("Nenhum código disponível", "Abra um assembly ou selecione um tipo no Explorer.");
-            return;
+            addInfoRow("Editor C# pronto", "Selecione um tipo no Explorer ou cole código C# abaixo.");
         }
         TextView editor = new TextView(this);
         editor.setText(highlightCSharp(decompiled));
