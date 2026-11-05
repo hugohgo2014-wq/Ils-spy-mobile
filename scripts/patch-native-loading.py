@@ -349,7 +349,7 @@ import android.widget.EditText;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.TextView;
+import android.widget.TextView;\nimport android.widget.ProgressBar;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -480,6 +480,10 @@ public final class WorkbenchActivity extends Activity {
         status = text("Inicializando motor…", 11, muted, false);
         status.setPadding(dp(4), dp(5), dp(4), dp(5));
         root.addView(status);
+        compileProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        compileProgress.setIndeterminate(true);
+        compileProgress.setVisibility(View.GONE);
+        root.addView(compileProgress, new LinearLayout.LayoutParams(-1, dp(4)));
 
         search = new EditText(this);
         search.setSingleLine(true);
@@ -1316,6 +1320,7 @@ helpers = r'''    private File compilerReferencesDirectory() throws Exception {
             showBuildDiagnostics(result);
         }
         buildRunning = false;
+        if (compileProgress != null) compileProgress.setVisibility(View.GONE);
     }
 
     private void recompileSource(String kind) {
@@ -1351,6 +1356,7 @@ helpers = r'''    private File compilerReferencesDirectory() throws Exception {
         }
 
         buildRunning = true;
+        compileProgress.setVisibility(View.VISIBLE);
         status.setText("Roslyn compilando " + kind.toUpperCase(Locale.ROOT) + " em segundo plano…");
         Thread worker = new Thread(() -> {
             try {
