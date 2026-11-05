@@ -484,21 +484,27 @@ public final class BinaryWorkbenchActivity extends Activity {
 
     private void openElf(File file) throws Exception {
         ElfInfo info = readElf(file);
-        if (info.architecture == 0) throw new IllegalArgumentException("Arquitetura ainda não suportada pelo Capstone.");
+        if (info.architecture == 0)
+            throw new IllegalArgumentException("Arquitetura ELF não suportada pelo Ghidra neste pacote.");
+
         long amount = Math.min(info.executableSize, 65536L);
-        String disassembly = NativeBridge.nativeDisassembleElf(file.getAbsolutePath(),
-                info.executableOffset, (int)amount, info.architecture);
-        String header = "ELF " + info.bits + "-bit · " + info.architectureName +
+        String summary = "ELF " + info.bits + "-bit · " + info.architectureName +
                 "\nMachine: " + info.machine +
-                "\nExecutable PT_LOAD: file offset 0x" + Long.toHexString(info.executableOffset) +
-                "\nVirtual address: 0x" + Long.toHexString(info.virtualAddress) +
-                "\nSegment size: " + info.executableSize + " bytes" +
-                "\nShowing first " + amount + " bytes (maximum 64 KiB)." +
-                "\n\n" + disassembly;
-        output.setText(header);
+                "\nSegmento executável: 0x" + Long.toHexString(info.executableOffset) +
+                "\nEndereço virtual: 0x" + Long.toHexString(info.virtualAddress) +
+                "\nTamanho do segmento: " + info.executableSize + " bytes" +
+                "\n\nDESCOMPILAÇÃO C/C++" +
+                "\nO Ghidra vai analisar as funções e reconstruir pseudocódigo C legível." +
+                "\nO resultado é uma reconstrução, não o arquivo-fonte original.";
+        output.setText(summary);
+        output.setTextIsSelectable(true);
         content.addView(output, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView note = label("Patch binário controlado · substitui bytes no segmento executável; não recompila C/C++ nem reconstrói o ELF.", 11, dim, false);
+        content.addView(button("C / C++ · DESCOMPILAR NOVAMENTE", true, this::decompileElfToC));
+        content.addView(button("Ver Assembly ARM / x86 (avançado)", false,
+                () -> showElfAssembly(file, info, amount)));
+
+        TextView note = label("Patch binário avançado · altera bytes no .so; não recompila C/C++ nem reconstrói o ELF.", 11, dim, false);
         note.setPadding(0, dp(12), 0, dp(5));
         content.addView(note);
         patchOffset = field("Offset do arquivo (ex.: 0x" + Long.toHexString(info.executableOffset) + ")");
@@ -507,10 +513,27 @@ public final class BinaryWorkbenchActivity extends Activity {
         patchBytes = field("Bytes hexadecimais (ex.: 1F 20 03 D5)");
         content.addView(patchBytes);
         content.addView(button("Criar cópia .so com patch", false, () -> patchElf(info)));
-        TextView decompilerNote = label("Descompilação nativa Ghidra · reconstrói pseudocódigo C; não recupera nomes, comentários ou o código-fonte original.", 11, dim, false);
-        decompilerNote.setPadding(0, dp(12), 0, dp(5));
-        content.addView(decompilerNote);
-        content.addView(button("Descompilar .so para código C (Ghidra)", true, this::decompileElfToC));
+
+        // C-like pseudocode is the default view. Assembly is now optional.
+        decompileElfToC();
+    }
+
+    private void showElfAssembly(File file, ElfInfo info, long amount) {
+        status.setText("Capstone desmontando Assembly…");
+        new Thread(() -> {
+            try {
+                String disassembly = NativeBridge.nativeDisassembleElf(file.getAbsolutePath(),
+                        info.executableOffset, (int)amount, info.architecture);
+                String header = "ASSEMBLY · " + info.architectureName +
+                        "\nMostrando até " + amount + " bytes do primeiro segmento executável.\n\n" + disassembly;
+                runOnUiThread(() -> {
+                    output.setText(header);
+                    status.setText("Assembly carregado · pseudocódigo C continua salvo no cache");
+                });
+            } catch (Throwable error) {
+                runOnUiThread(() -> status.setText("Falha no Assembly: " + error.getMessage()));
+            }
+        }, "elf-assembly-view").start();
     }
 
     private void decompileElfToC() {
@@ -518,33 +541,67 @@ public final class BinaryWorkbenchActivity extends Activity {
             status.setText("Abra um arquivo .so primeiro.");
             return;
         }
-        status.setText("Preparando Ghidra native decompiler…");
+        status.setText("Ghidra analisando funções e reconstruindo pseudocódigo C…");
         new Thread(() -> {
+            File result = new File(getCacheDir(),
+                    opened.getName().replaceAll("(?i)\\.so$", "") + "-decompiled.c");
+            File raw = new File(getCacheDir(), opened.getName() + ".ghidra-output.txt");
             try {
                 File prefix = ensureRizinBundle();
-                String code = runRizinGhidra(prefix, opened);
-                if (code.trim().isEmpty())
-                    throw new IllegalStateException("Ghidra não retornou pseudocódigo para este ELF.");
-                String banner = "/* Pseudocódigo C reconstruído pelo Ghidra decompiler.\\n" +
-                        " * Não é o fonte C/C++ original. Símbolos removidos e otimizações limitam a reconstrução.\\n */\\n\\n";
-                File result = new File(getCacheDir(),
-                        opened.getName().replaceAll("(?i)\\\\.so$", "") + "-decompiled.c");
-                Files.write(result.toPath(), (banner + code).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                runRizinGhidra(prefix, opened, raw);
+
+                String banner = "/* Pseudocódigo C reconstruído pelo Ghidra decompiler.\n" +
+                        " * Não é o fonte C/C++ original. Nomes e comentários podem ter sido perdidos.\n" +
+                        " * Código otimizado ou sem símbolos pode limitar a reconstrução.\n */\n\n";
+                try (FileOutputStream out = new FileOutputStream(result, false);
+                     FileInputStream in = new FileInputStream(raw)) {
+                    out.write(banner.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    byte[] buffer = new byte[65536];
+                    int count;
+                    while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
+                    out.flush();
+                    out.getFD().sync();
+                }
+                if (result.length() <= banner.length())
+                    throw new IllegalStateException("O Ghidra não gerou funções em pseudocódigo C.");
+
+                String preview = readTextPreview(result, 768 * 1024);
                 runOnUiThread(() -> {
                     decompiledCFile = result;
-                    output.setText(banner + code);
-                    status.setText("Ghidra terminou · " + result.length() + " bytes de pseudocódigo C");
-                    content.addView(button("Salvar pseudocódigo C (.c)", true,
+                    output.setText(preview);
+                    status.setText("Pseudocódigo C pronto · arquivo completo: " + result.length() +
+                            " bytes · a prévia evita falta de memória");
+                    content.addView(button("SALVAR C/C++ RECONSTRUÍDO (.c)", true,
                             () -> requestSave(decompiledCFile, decompiledCFile.getName())));
                 });
             } catch (Throwable error) {
                 runOnUiThread(() -> {
-                    status.setText("Falha na descompilação Ghidra: " + error.getMessage());
+                    status.setText("Falha na descompilação C: " + error.getMessage());
                     output.setText("GHIDRA_ERROR: " + error.getClass().getSimpleName() +
-                            "\\n" + error.getMessage());
+                            "\n" + error.getMessage());
                 });
+            } finally {
+                try { if (raw.exists()) raw.delete(); } catch (Throwable ignored) { }
             }
         }, "ghidra-native-decompiler").start();
+    }
+
+    private String readTextPreview(File file, int maxBytes) throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream(Math.min(maxBytes, 65536));
+        try (InputStream in = new FileInputStream(file)) {
+            byte[] buffer = new byte[32768];
+            int remaining = maxBytes;
+            int count;
+            while (remaining > 0 && (count = in.read(buffer, 0, Math.min(buffer.length, remaining))) != -1) {
+                bytes.write(buffer, 0, count);
+                remaining -= count;
+            }
+        }
+        String preview = new String(bytes.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+        if (file.length() > maxBytes)
+            preview += "\n\n/* Prévia limitada para proteger a memória do Android.\n" +
+                    " * O arquivo .c completo foi mantido e pode ser salvo pelo botão acima.\n */";
+        return preview;
     }
 
     private File ensureRizinBundle() throws Exception {
@@ -598,7 +655,7 @@ public final class BinaryWorkbenchActivity extends Activity {
         }
     }
 
-    private String runRizinGhidra(File prefix, File elf) throws Exception {
+    private void runRizinGhidra(File prefix, File elf, File outputFile) throws Exception {
         File executable = new File(prefix, "bin/rizin");
         File libraryDir = new File(prefix, "lib");
         File pluginDir = new File(prefix, "lib/rizin/plugins");
@@ -614,6 +671,7 @@ public final class BinaryWorkbenchActivity extends Activity {
                 elf.getAbsolutePath());
         builder.directory(prefix);
         builder.redirectErrorStream(true);
+        builder.redirectOutput(outputFile);
         java.util.Map<String, String> env = builder.environment();
         env.put("LD_LIBRARY_PATH", libraryDir.getAbsolutePath());
         env.put("RZ_LIBR_PLUGINS", pluginDir.getAbsolutePath());
@@ -621,26 +679,22 @@ public final class BinaryWorkbenchActivity extends Activity {
         env.put("RZ_MAGICPATH", new File(prefix, "share/rizin/magic").getAbsolutePath());
         env.put("RZ_RDATAHOME", new File(getFilesDir(), "rizin-data").getAbsolutePath());
         Process process = builder.start();
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        boolean truncated = false;
-        try (InputStream in = process.getInputStream()) {
-            byte[] buffer = new byte[32768];
-            int count;
-            while ((count = in.read(buffer)) != -1) {
-                if (bytes.size() + count <= 20 * 1024 * 1024) bytes.write(buffer, 0, count);
-                else truncated = true;
-            }
+        if (!process.waitFor(10, java.util.concurrent.TimeUnit.MINUTES)) {
+            process.destroyForcibly();
+            throw new IOException("A descompilação excedeu 10 minutos e foi encerrada com segurança.");
         }
-        int exit = process.waitFor();
-        String result = new String(bytes.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
-        if (truncated) result += "\\n\\n/* Output truncated at 20 MiB. */";
-        String lower = result.toLowerCase(Locale.ROOT);
-        if (exit != 0 || lower.contains("unknown command") || lower.contains("cannot load plugin"))
-            throw new IOException("Rizin/Ghidra falhou (exit " + exit + "):\\n" + result);
-        if (!lower.contains("void ") && !lower.contains("int ") &&
-                !lower.contains("undefined") && !lower.contains("ulong"))
-            throw new IOException("Nenhuma função foi descompilada. Verifique símbolos/arquitetura do ELF.\\n" + result);
-        return result;
+        int exit = process.exitValue();
+        if (exit != 0 || !outputFile.isFile() || outputFile.length() == 0) {
+            String diagnostic = outputFile.isFile() ? readTextPreview(outputFile, 16 * 1024) : "";
+            throw new IOException("Rizin/Ghidra falhou (exit " + exit + "):\n" + diagnostic);
+        }
+        String sample = readTextPreview(outputFile, 1024 * 1024).toLowerCase(Locale.ROOT);
+        if (sample.contains("unknown command") || sample.contains("cannot load plugin") ||
+                (!sample.contains("void ") && !sample.contains("int ") &&
+                 !sample.contains("undefined") && !sample.contains("ulong"))) {
+            throw new IOException("Nenhuma função C foi descompilada. Verifique símbolos/arquitetura do ELF.\n" +
+                    readTextPreview(outputFile, 16 * 1024));
+        }
     }
 
     private EditText field(String hint) {
