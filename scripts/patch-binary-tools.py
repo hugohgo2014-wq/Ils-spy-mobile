@@ -625,6 +625,7 @@ public final class BinaryWorkbenchActivity extends Activity {
         if (!decoded.mkdirs()) throw new IllegalStateException("Não foi possível criar a pasta XML.");
         Config config = new Config("3.0.3");
         config.setJobs(1);
+        config.setForced(true); // ApkDecoder clears/recreates its output directory.
         config.setKeepBrokenResources(true);
         config.setIgnoreRawValues(true);
         // Apktool 3.0.3 exposes File-based ApkDecoder APIs. Decode the tiny
