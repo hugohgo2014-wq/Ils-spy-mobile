@@ -124,16 +124,16 @@ jobs:
           UNBOUND_BUILD="$TERMUX_DIR/packages/libunbound/build.sh"
           test -f "$UNBOUND_BUILD"
           cat >> "$UNBOUND_BUILD" <<'TERMUX_UNBOUND_FIX'
-termux_step_pre_configure() {
-    local interface_file="$TERMUX_PKG_SRCDIR/libunbound/python/libunbound.i"
-    test -f "$interface_file"
-    sed -i 's/\$function/\$action/g' "$interface_file"
-    if grep -Fq '$function' "$interface_file"; then
-        echo "Unbound SWIG compatibility patch did not apply" >&2
-        return 1
-    fi
-}
-TERMUX_UNBOUND_FIX
+          termux_step_pre_configure() {
+              local interface_file="$TERMUX_PKG_SRCDIR/libunbound/python/libunbound.i"
+              test -f "$interface_file"
+              sed -i 's/\$function/\$action/g' "$interface_file"
+              if grep -Fq '$function' "$interface_file"; then
+                  echo "Unbound SWIG compatibility patch did not apply" >&2
+                  return 1
+              fi
+          }
+          TERMUX_UNBOUND_FIX
           tail -n 12 "$UNBOUND_BUILD"
 
           # Build the builder image from the SAME pinned Termux branch.
