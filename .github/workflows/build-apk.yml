@@ -18,7 +18,7 @@ jobs:
   build-android:
     name: NativeAOT + Android APK (ARM64 / x86_64)
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 240
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,6 +47,33 @@ jobs:
 
       - name: Add ELF, DEX and ARSC binary workbench
         run: python "$GITHUB_WORKSPACE/scripts/patch-binary-tools.py" "$RUNNER_TEMP/ilspy-mobile"
+
+      - name: Build custom Termux bootstrap for ILSpy Mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          TERMUX_DIR="$RUNNER_TEMP/termux-packages"
+          git clone --depth 1 --branch infra-improvs https://github.com/agnostic-apollo/termux-packages.git "$TERMUX_DIR"
+          cd "$TERMUX_DIR"
+          grep -n '^TERMUX_APP_PACKAGE' scripts/properties.sh
+          sed -i -E 's/^TERMUX_APP_PACKAGE=.*/TERMUX_APP_PACKAGE=com.ilspy.mobile/' scripts/properties.sh
+          grep -n '^TERMUX_APP_PACKAGE' scripts/properties.sh
+          ./scripts/run-docker.sh ./scripts/build-bootstraps.sh --architectures aarch64 --add clang cmake ninja git python make pkg-config binutils
+          ./scripts/run-docker.sh ./scripts/build-bootstraps.sh --architectures x86_64 --add clang cmake ninja git python make pkg-config binutils
+          mkdir -p "$RUNNER_TEMP/ilspy-mobile/app/src/main/assets/termux"
+          for arch in aarch64 x86_64; do
+            archive="$TERMUX_DIR/bootstrap-$arch.zip"
+            if [ ! -s "$archive" ]; then
+              archive="$(find "$TERMUX_DIR" -maxdepth 3 -type f -name "bootstrap-$arch.zip" -print -quit)"
+            fi
+            test -n "$archive" && test -s "$archive"
+            unzip -tq "$archive"
+            cp "$archive" "$RUNNER_TEMP/ilspy-mobile/app/src/main/assets/termux/bootstrap-$arch.zip"
+            echo "Bundled custom-prefix Termux bootstrap: $arch ($(wc -c < "$archive") bytes)"
+          done
+
+      - name: Add integrated Termux startup, terminal and foreground service
+        run: python "$GITHUB_WORKSPACE/scripts/patch-termux-environment.py" "$RUNNER_TEMP/ilspy-mobile"
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
