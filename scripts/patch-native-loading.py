@@ -1231,7 +1231,7 @@ helpers = r'''    private File compilerReferencesDirectory() throws Exception {
             status.setText("Roslyn compilando " + kind.toUpperCase(Locale.ROOT) + "…");
             String result = NativeBridge.nativeRecompile(
                     sourceFile.getAbsolutePath(), outputFile.getAbsolutePath(),
-                    references, kind, baseName + "Rebuilt");
+                    references, kind, baseName);
             if (result == null || !result.startsWith("COMPILE_OK")) {
                 status.setText("Falha na recompilação");
                 showBuildDiagnostics(result == null ? "O compilador não retornou resultado." : result);
