@@ -216,7 +216,7 @@ jobs:
           \ttermux_setup_nodejs
           \tlocal source_file=\"$TERMUX_PKG_SRCDIR/generate-db.js\"
           \ttest -f \"$source_file\"
-          \tpython3 \"$TERMUX_SCRIPTDIR/patch-command-not-found.py\" \"$source_file\"
+          \tpython3 \"$TERMUX_SCRIPTDIR/scripts/patch-command-not-found.py\" \"$source_file\"
           \tnode --check \"$source_file\"
           }"""
           if content.count(old) != 1:
