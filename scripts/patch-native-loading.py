@@ -22,7 +22,7 @@ add_library(ilspy_bridge SHARED native-lib.cpp)
 target_compile_options(ilspy_bridge PRIVATE -Wall -Wextra -Werror=return-type)
 find_library(android-log log)
 find_library(android-dl dl)
-target_link_libraries(ilspy_bridge PRIVATE \${android-log} \${android-dl})
+target_link_libraries(ilspy_bridge PRIVATE ${android-log} ${android-dl})
 """, encoding="utf-8")
 
 # Replace direct unresolved engine references with an explicit runtime-loaded C ABI.
@@ -1314,7 +1314,7 @@ helpers = r'''    private File compilerReferencesDirectory() throws Exception {
                 startActivityForResult(create, PICK_OUTPUT);
             } catch (Throwable error) {
                 status.setText("Compilado, mas o seletor falhou: " + error.getMessage());
-                showBuildDiagnostics("Arquivo no cache privado:\\n" + outputFile.getAbsolutePath() + "\\n" + error);
+                showBuildDiagnostics("Arquivo no cache privado:\n" + outputFile.getAbsolutePath() + "\n" + error);
             }
         } else {
             status.setText("Falha na recompilação · veja Build Output");
