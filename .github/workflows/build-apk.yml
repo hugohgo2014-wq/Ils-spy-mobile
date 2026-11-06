@@ -119,6 +119,21 @@ jobs:
           fi
           grep 'termux_download "https://archive.docbook.org/xml/' "$DOCBOOK_BUILD"
 
+          # invisible-island.net returned HTTP 403 in the previous CI run.
+          # Use the maintainer's official mirror for the pinned Dialog source.
+          # Keep the upstream SHA-256 and verify the mirror before starting the
+          # long bootstrap build, so an unavailable/corrupt mirror fails early.
+          DIALOG_BUILD="$TERMUX_DIR/packages/dialog/build.sh"
+          test -f "$DIALOG_BUILD"
+          DIALOG_URL="https://invisible-mirror.net/archives/dialog/dialog-1.3-20240307.tgz"
+          DIALOG_SHA256="339d311c6abb240213426b99ad63565cbcb3e8641ef1989c033e945b754d34ef"
+          DIALOG_PREFLIGHT="$RUNNER_TEMP/dialog-1.3-20240307.tgz"
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 "$DIALOG_URL" --output "$DIALOG_PREFLIGHT"
+          echo "$DIALOG_SHA256  $DIALOG_PREFLIGHT" | sha256sum --check --status
+          sed -i "s#^TERMUX_PKG_SRCURL=.*#TERMUX_PKG_SRCURL=$DIALOG_URL#" "$DIALOG_BUILD"
+          grep -F "TERMUX_PKG_SRCURL=$DIALOG_URL" "$DIALOG_BUILD"
+          grep -F "TERMUX_PKG_SHA256=$DIALOG_SHA256" "$DIALOG_BUILD"
+
           # Set the application id before generating bootstrap metadata.
           sed -i -E 's/^TERMUX_APP__PACKAGE_NAME=.*/TERMUX_APP__PACKAGE_NAME="com.ilspy.mobile"/' scripts/properties.sh
           grep -n '^TERMUX_APP__PACKAGE_NAME' scripts/properties.sh
