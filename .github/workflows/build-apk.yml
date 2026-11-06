@@ -134,6 +134,21 @@ jobs:
           grep -F "TERMUX_PKG_SRCURL=$DIALOG_URL" "$DIALOG_BUILD"
           grep -F "TERMUX_PKG_SHA256=$DIALOG_SHA256" "$DIALOG_BUILD"
 
+          # The historical waterlan host now returns a small non-archive response
+          # in CI. Use the project's official SourceForge release mirror instead.
+          # Keep the upstream checksum, and validate the mirror before the lengthy
+          # Termux bootstrap build so a bad response fails immediately.
+          DOS2UNIX_BUILD="$TERMUX_DIR/packages/dos2unix/build.sh"
+          DOS2UNIX_URL="https://downloads.sourceforge.net/project/dos2unix/dos2unix/7.5.2/dos2unix-7.5.2.tar.gz"
+          DOS2UNIX_SHA256="264742446608442eb48f96c20af6da303cb3a92b364e72cb7e24f88239c4bf3a"
+          DOS2UNIX_PREFLIGHT="$RUNNER_TEMP/dos2unix-7.5.2.tar.gz"
+          test -f "$DOS2UNIX_BUILD"
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 "$DOS2UNIX_URL" --output "$DOS2UNIX_PREFLIGHT"
+          echo "$DOS2UNIX_SHA256  $DOS2UNIX_PREFLIGHT" | sha256sum --check
+          sed -i "s#^TERMUX_PKG_SRCURL=.*#TERMUX_PKG_SRCURL=$DOS2UNIX_URL#" "$DOS2UNIX_BUILD"
+          grep -F "TERMUX_PKG_SRCURL=$DOS2UNIX_URL" "$DOS2UNIX_BUILD"
+          grep -F "TERMUX_PKG_SHA256=$DOS2UNIX_SHA256" "$DOS2UNIX_BUILD"
+
           # Set the application id before generating bootstrap metadata.
           sed -i -E 's/^TERMUX_APP__PACKAGE_NAME=.*/TERMUX_APP__PACKAGE_NAME="com.ilspy.mobile"/' scripts/properties.sh
           grep -n '^TERMUX_APP__PACKAGE_NAME' scripts/properties.sh
