@@ -47,7 +47,9 @@ else:
 
 g = gradle.read_text(encoding="utf-8")
 if "useLegacyPackaging" not in g:
-    g = re.sub(r"(?m)^android\s*\{", "android {\\n    packagingOptions {\\n        jniLibs { useLegacyPackaging true }\\n    }", g, count=1)
+    g = re.sub(r"(?m)^android\s*\{", "android {\n    packagingOptions {\n        jniLibs { useLegacyPackaging true }\n    }", g, count=1)
+    if "useLegacyPackaging true" not in g:
+        raise SystemExit("Could not inject android.packagingOptions.jniLibs.useLegacyPackaging")
 dependency = "    implementation 'org.apktool:apktool-lib:3.0.3'\n    implementation 'com.github.iBotPeaches.smali:smali:b6365a84f4'"
 if "org.apktool:apktool-lib" not in g:
     match = re.search(r"(?m)^dependencies\s*\{", g)
@@ -548,7 +550,7 @@ public final class BinaryWorkbenchActivity extends Activity {
                 "\n\n" + disassembly;
         // Make reconstructed C pseudocode the primary view. Assembly remains
         // available as a secondary diagnostic, never as the default "decompile" result.
-        output.setText("Preparando descompilador Ghidra…\\nO pseudocódigo C será exibido aqui.");
+        output.setText("Preparando descompilador Ghidra…\nO pseudocódigo C será exibido aqui.");
         content.addView(output, new LinearLayout.LayoutParams(-1, -2));
         content.addView(button("Ver Assembly (Capstone)", false, () -> output.setText(header)));
         content.addView(button("Descompilar para pseudocódigo C/C++ (Ghidra)", true, this::decompileElfToC));
@@ -585,8 +587,8 @@ public final class BinaryWorkbenchActivity extends Activity {
                 logEvent("Ghidra retornou " + code.length() + " caracteres");
                 if (code.trim().isEmpty())
                     throw new IllegalStateException("Ghidra não retornou pseudocódigo para este ELF.");
-                String banner = "/* Pseudocódigo C reconstruído pelo Ghidra decompiler.\\n" +
-                        " * Não é o fonte C/C++ original. Símbolos removidos e otimizações limitam a reconstrução.\\n */\\n\\n";
+                String banner = "/* Pseudocódigo C reconstruído pelo Ghidra decompiler.\n" +
+                        " * Não é o fonte C/C++ original. Símbolos removidos e otimizações limitam a reconstrução.\n */\n\n";
                 File result = new File(getCacheDir(),
                         opened.getName().replaceAll("(?i)\\\\.so$", "") + "-decompiled.c");
                 Files.write(result.toPath(), (banner + code).getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -608,7 +610,7 @@ public final class BinaryWorkbenchActivity extends Activity {
                     logEvent("GHIDRA_ERROR: " + error.getClass().getSimpleName() + ": " + error.getMessage());
                     status.setText("Falha na descompilação Ghidra: " + error.getMessage());
                     output.setText("GHIDRA_ERROR: " + error.getClass().getSimpleName() +
-                            "\\n" + error.getMessage());
+                            "\n" + error.getMessage());
                 });
             }
         }, "ghidra-native-decompiler").start();
@@ -747,17 +749,17 @@ public final class BinaryWorkbenchActivity extends Activity {
         }
         logFile.delete();
         String result = new String(bytes.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
-        if (truncated) result += "\\n\\n/* Output truncated at 20 MiB. */";
+        if (truncated) result += "\n\n/* Output truncated at 20 MiB. */";
         String lower = result.toLowerCase(Locale.ROOT);
         if (exit != 0 || lower.contains("unknown command") || lower.contains("cannot load plugin"))
-            throw new IOException("Rizin/Ghidra falhou (exit " + exit + "):\\n" + result);
+            throw new IOException("Rizin/Ghidra falhou (exit " + exit + "):\n" + result);
         if (lower.contains("no sleigh specification") || lower.contains("no languages loaded") ||
                 !lower.contains("aarch64"))
             throw new IOException("Ghidra não carregou a arquitetura " + language +
-                    ". SLEIGHHOME=" + sleighDir.getAbsolutePath() + "\\n" + result);
+                    ". SLEIGHHOME=" + sleighDir.getAbsolutePath() + "\n" + result);
         if (!lower.contains("void ") && !lower.contains("int ") &&
                 !lower.contains("undefined") && !lower.contains("ulong"))
-            throw new IOException("Nenhuma função foi descompilada. Verifique símbolos/arquitetura do ELF.\\n" + result);
+            throw new IOException("Nenhuma função foi descompilada. Verifique símbolos/arquitetura do ELF.\n" + result);
         return result;
     }
 
