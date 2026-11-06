@@ -164,39 +164,73 @@ jobs:
           TERMUX_UNBOUND_FIX
           tail -n 12 "$UNBOUND_BUILD"
 
-          # Backport the upstream command-not-found fix for alternatives whose
-          # target is absent from the generated Contents index (e.g. xfce4-session).
+          # Backport the upstream command-not-found fix without replacing the
+          # recipe's existing Node.js setup. termux_setup_nodejs() is essential:
+          # generate-db.js has a /usr/bin/env node shebang.
           CNF_BUILD="$TERMUX_DIR/packages/command-not-found/build.sh"
+          NODE_SETUP="$TERMUX_DIR/scripts/build/setup/termux_setup_nodejs.sh"
+          PATCH_TOOL="$TERMUX_DIR/scripts/patch-command-not-found.py"
           test -f "$CNF_BUILD"
-          cat >> "$CNF_BUILD" <<'TERMUX_CNF_FIX'
-          termux_step_pre_configure() {
-              local source_file="$TERMUX_PKG_SRCDIR/generate-db.js"
-              test -f "$source_file"
-              python3 - "$source_file" <<'PY'
+          test -f "$NODE_SETUP"
+          grep -F 'NODEJS_VERSION=22.17.0' "$NODE_SETUP"
+          grep -F '325c0f1261e0c61bcae369a1274028e9cfb7ab7949c05512c5b1e630f7e80e12' "$NODE_SETUP"
+          cat > "$PATCH_TOOL" <<'PATCH_TOOL_PY'
+          import pathlib
+          import re
+          import sys
+
+          if len(sys.argv) != 2:
+              raise SystemExit("usage: patch-command-not-found.py generate-db.js")
+
+          source = pathlib.Path(sys.argv[1])
+          if not source.is_file():
+              raise SystemExit(f"command-not-found source missing: {source}")
+          content = source.read_text()
+          pattern = re.compile(
+              r"if \(packageName === undefined\) \{\n\s+console\.error\(.*?\);\n\s+process\.exit\(1\);\n\s+\}",
+              re.S,
+          )
+          matches = list(pattern.finditer(content))
+          if len(matches) != 1:
+              raise SystemExit("Unexpected command-not-found source; refusing an unverified patch")
+          match = matches[0]
+          old_block = match.group(0)
+          new_block = old_block.replace("console.error(", "console.warn(").replace("process.exit(1);", "return;")
+          if new_block == old_block or "console.error(" in new_block or "process.exit(1)" in new_block:
+              raise SystemExit("command-not-found alternatives patch did not change the fatal branch")
+          patched = content[:match.start()] + new_block + content[match.end():]
+          source.write_text(patched)
+          print("Applied verified command-not-found alternatives compatibility patch")
+          PATCH_TOOL_PY
+          python3 -m py_compile "$PATCH_TOOL"
+          python3 - "$CNF_BUILD" <<'PATCH_RECIPE_PY'
           import pathlib
           import sys
 
-          source = pathlib.Path(sys.argv[1])
-          content = source.read_text()
-          old = """        if (packageName === undefined) {
-                    console.error(`Package name not found for path: ${path}`);
-                    process.exit(1);
-                  }"""
-          new = """        if (packageName === undefined) {
-                    console.warn(`WARNING: Package name not found for path: ${path}. Skipping...`);
-                    return;
-                  }"""
+          build_file = pathlib.Path(sys.argv[1])
+          content = build_file.read_text()
+          old = "termux_step_pre_configure() {\n\texport TERMUX_PREFIX\n\texport TERMUX_SCRIPTDIR\n\ttermux_setup_nodejs\n}"
+          new = """termux_step_pre_configure() {
+          \texport TERMUX_PREFIX
+          \texport TERMUX_SCRIPTDIR
+          \ttermux_setup_nodejs
+          \tlocal source_file=\"$TERMUX_PKG_SRCDIR/generate-db.js\"
+          \ttest -f \"$source_file\"
+          \tpython3 \"$TERMUX_SCRIPTDIR/patch-command-not-found.py\" \"$source_file\"
+          \tnode --check \"$source_file\"
+          }"""
           if content.count(old) != 1:
-              raise SystemExit("Unexpected command-not-found generate-db.js; refusing an unverified patch")
+              raise SystemExit("Unexpected command-not-found pre-configure hook; refusing to replace it")
           patched = content.replace(old, new)
-          if "console.error(`Package name not found for path: ${path}`)" in patched:
-              raise SystemExit("command-not-found fatal alternatives check remains")
-          source.write_text(patched)
-          print("Applied upstream-compatible command-not-found alternatives fix")
-          PY
-          }
-          TERMUX_CNF_FIX
-          tail -n 25 "$CNF_BUILD"
+          if patched.count("termux_step_pre_configure() {") != 1:
+              raise SystemExit("command-not-found pre-configure hook was duplicated")
+          if "termux_setup_nodejs" not in patched:
+              raise SystemExit("Original Node.js setup was not preserved")
+          build_file.write_text(patched)
+          print("Patched command-not-found while preserving termux_setup_nodejs()")
+          PATCH_RECIPE_PY
+          grep -A8 '^termux_step_pre_configure()' "$CNF_BUILD"
+          test "$(grep -c '^termux_step_pre_configure()' "$CNF_BUILD")" -eq 1
 
           # Build the builder image from the SAME pinned Termux branch.
           # The published :latest image currently contains NDK r30, while
@@ -230,6 +264,13 @@ jobs:
               echo "Verified Termux builder NDK:"
               grep "Pkg.Revision" "$NDK/source.properties"
               test -x "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+
+              # Preflight command-not-found for both ABIs before the full bootstrap
+              # so missing host tools fail immediately instead of after long builds.
+              for arch in aarch64 x86_64; do
+                echo "Preflight: command-not-found for $arch"
+                ./build-package.sh -a "$arch" command-not-found
+              done
 
               ./scripts/build-bootstraps.sh \
                 --architectures aarch64,x86_64 \
