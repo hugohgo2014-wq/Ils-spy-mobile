@@ -15,9 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '8.0.x'
       - name: Build managed DLL
@@ -27,7 +27,7 @@ jobs:
           test -s test-assembly/HelloWorld.Test/bin/Release/net8.0/HelloWorld.Test.dll
           file test-assembly/HelloWorld.Test/bin/Release/net8.0/HelloWorld.Test.dll
       - name: Upload DLL
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: HelloWorld-CSharp-DLL
           path: test-assembly/HelloWorld.Test/bin/Release/net8.0/HelloWorld.Test.dll
