@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 240
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Reconstruct and verify source archive
         shell: bash
@@ -53,13 +53,13 @@ jobs:
         run: python "$GITHUB_WORKSPACE/scripts/patch-termux-environment.py" "$RUNNER_TEMP/ilspy-mobile"
 
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up .NET 10
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
@@ -341,7 +341,7 @@ jobs:
           bash "$GITHUB_WORKSPACE/scripts/build-native-decompiler.sh" "$RUNNER_TEMP/ilspy-mobile"
 
       - name: Set up Gradle 8.13
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.13'
 
@@ -350,7 +350,7 @@ jobs:
         run: gradle --no-daemon clean lintDebug testDebugUnitTest assembleDebug assembleRelease
 
       - name: Upload APK artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ILSpy-Mobile-Android-APKs
           if-no-files-found: error

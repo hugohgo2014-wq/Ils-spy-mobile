@@ -137,7 +137,7 @@ EOF
   local cxx_shared="$NDK/sysroot/usr/lib/$triple/libc++_shared.so"
   if [[ -f "$cxx_shared" ]]; then cp "$cxx_shared" "$asset/lib/libc++_shared.so"; fi
   # Dereference versioned .so symlinks: Android assets cannot recreate symlinks.
-  find "$prefix/lib" -maxdepth 1 -type f -o -type l | while read -r library; do
+  find "$prefix/lib" -maxdepth 1 \( -type f -o -type l \) -print | while read -r library; do
     case "$library" in
       *.so|*.so.*) cp -L "$library" "$asset/lib/$(basename "$library")" ;;
     esac
@@ -157,7 +157,7 @@ EOF
   local jni="$ROOT/app/src/main/jniLibs/$abi"
   mkdir -p "$jni"
   cp "$prefix/bin/rizin" "$jni/libilspy_rizin.so"
-  find "$prefix/lib" -maxdepth 1 -type f -o -type l | while read -r library; do
+  find "$prefix/lib" -maxdepth 1 \( -type f -o -type l \) -print | while read -r library; do
     case "$library" in
       *.so|*.so.*) cp -L "$library" "$jni/$(basename "$library")" ;;
     esac
